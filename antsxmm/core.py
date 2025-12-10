@@ -4,6 +4,7 @@ import pandas as pd
 import ants
 import tempfile
 import shutil
+import re
 
 def sanitize_filename(filepath, requirements, verbose=False):
     """
@@ -22,8 +23,7 @@ def sanitize_filename(filepath, requirements, verbose=False):
         
     filename = os.path.basename(filepath)
     
-    # Check if any requirement is met
-    # antspymm checks: if not "lair" in flair_filename
+    # Check if any requirement is met exactly
     meets_req = False
     for req in requirements:
         if req in filename:
@@ -42,21 +42,29 @@ def sanitize_filename(filepath, requirements, verbose=False):
     os.makedirs(staging_dir, exist_ok=True)
     
     # Construct new name
-    # We take the first requirement and inject it
     injector = requirements[0]
     
-    # Try to replace case-insensitive version first
-    # e.g. replace FLAIR with flair
+    # Attempt case-insensitive replacement (e.g. FLAIR -> flair)
     new_name = filename
     replaced = False
     for req in requirements:
-        if req.upper() in filename:
-            new_name = filename.replace(req.upper(), req)
+        # Create a regex pattern to match 'req' ignoring case
+        pattern = re.compile(re.escape(req), re.IGNORECASE)
+        # If we find the pattern (e.g. LAIR inside FLAIR), replace it with the requirement (lair)
+        # BUT, to fix the "Flair" vs "flair" issue, if the match is part of a larger word
+        # we might want to be careful. 
+        # Simpler approach: If "FLAIR" is in the name, replace the WHOLE word "FLAIR" with "flair"
+        # if possible.
+        
+        # Current logic: Replace 'LAIR' with 'lair'. 'FLAIR' -> 'Flair'.
+        # 'Flair' contains 'lair', so it passes antspymm check.
+        if pattern.search(filename):
+            new_name = pattern.sub(req, filename)
             replaced = True
             break
             
     if not replaced:
-        # Just append the requirement
+        # Just insert the requirement before the extension
         name, ext = os.path.splitext(filename)
         if name.endswith(".nii"): # handle .nii.gz
             name, ext2 = os.path.splitext(name)
@@ -159,7 +167,6 @@ def process_session(session_data, output_root, project_id="ANTsX",
 
     except Exception as e:
         print(f"Error processing {sub_id} {date_id}: {str(e)}")
-        # Print Traceback for debugging
         import traceback
         traceback.print_exc()
         return False
