@@ -39,3 +39,12 @@ echo " antsxmm BIDS_TEST/ PROCESSED_OUTPUT/ --project PPMI \
     --participant-label sub-211239 --session-label ses-20230405 "
 echo "=========================================================="
 ```
+
+
+## versioning
+
+Create a new semantic version tag (e.g., v0.2.0).
+
+```bash
+git tag v0.2.0
+```
