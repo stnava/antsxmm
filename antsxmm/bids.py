@@ -17,27 +17,20 @@ def parse_antsxbids_layout(bids_root):
     sessions_data = []
 
     for sub_dir in subjects:
-        # Robust split for subject ID
-        parts = sub_dir.name.split("-")
-        if len(parts) > 1:
-            sub_id = parts[1]
-        else:
-            sub_id = parts[0]
+        # CHANGED: Use the full folder name as the ID (e.g. 'sub-211239')
+        sub_id = sub_dir.name
         
         # Find sessions
         sessions = sorted([d for d in sub_dir.glob("ses*") if d.is_dir()])
         
         for ses_dir in sessions:
-            ses_parts = ses_dir.name.split("-")
-            if len(ses_parts) > 1:
-                ses_id = ses_parts[1]
-            else:
-                ses_id = ses_parts[0]
+            # CHANGED: Use the full folder name as the ID (e.g. 'ses-20230405')
+            ses_id = ses_dir.name
             
             # Initialize dict for this session
             data = {
                 'subjectID': sub_id,
-                'date': ses_id, # antsxbids usually puts date in ses
+                'date': ses_id, 
                 'session_path': str(ses_dir)
             }
 

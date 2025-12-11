@@ -30,6 +30,6 @@ pip install .[test]"
 pytest --cov=antsxmm --cov-report=term-missing tests/"
 echo "You can now run a specific subject:"
 echo " antsxmm BIDS_TEST/ PROCESSED_OUTPUT/ --project PPMI \ 
-    --participant-label 211239 --session-label 20230405 "
+    --participant-label sub-211239 --session-label ses-20230405 "
 echo "=========================================================="
 ```
