@@ -10,13 +10,6 @@ def sanitize_filename(filepath, requirements, verbose=False):
     """
     Checks if filepath meets antspymm naming requirements.
     If not, creates a symlink in a temporary directory that does.
-    
-    Args:
-        filepath: path to file
-        requirements: list of strings (e.g. ['lair']) that MUST be in filename
-    
-    Returns:
-        Path to original file or sanitized symlink.
     """
     if not filepath:
         return None
@@ -44,36 +37,24 @@ def sanitize_filename(filepath, requirements, verbose=False):
     # Construct new name
     injector = requirements[0]
     
-    # Attempt case-insensitive replacement (e.g. FLAIR -> flair)
     new_name = filename
     replaced = False
     for req in requirements:
-        # Create a regex pattern to match 'req' ignoring case
         pattern = re.compile(re.escape(req), re.IGNORECASE)
-        # If we find the pattern (e.g. LAIR inside FLAIR), replace it with the requirement (lair)
-        # BUT, to fix the "Flair" vs "flair" issue, if the match is part of a larger word
-        # we might want to be careful. 
-        # Simpler approach: If "FLAIR" is in the name, replace the WHOLE word "FLAIR" with "flair"
-        # if possible.
-        
-        # Current logic: Replace 'LAIR' with 'lair'. 'FLAIR' -> 'Flair'.
-        # 'Flair' contains 'lair', so it passes antspymm check.
         if pattern.search(filename):
             new_name = pattern.sub(req, filename)
             replaced = True
             break
             
     if not replaced:
-        # Just insert the requirement before the extension
         name, ext = os.path.splitext(filename)
-        if name.endswith(".nii"): # handle .nii.gz
+        if name.endswith(".nii"): 
             name, ext2 = os.path.splitext(name)
             ext = ext2 + ext
         new_name = f"{name}_{injector}{ext}"
         
     symlink_path = os.path.join(staging_dir, new_name)
     
-    # Remove existing if present
     if os.path.exists(symlink_path) or os.path.islink(symlink_path):
         os.remove(symlink_path)
         
@@ -81,7 +62,7 @@ def sanitize_filename(filepath, requirements, verbose=False):
     return symlink_path
 
 def process_session(session_data, output_root, project_id="ANTsX", 
-                    denoise_dti=True, dti_moco='SyN', verbose=True):
+                    denoise_dti=True, dti_moco='SyN', separator='+', verbose=True):
     """
     Runs the ANTsPyMM pipeline for a single session row.
     """
@@ -94,24 +75,20 @@ def process_session(session_data, output_root, project_id="ANTsX",
     # 2. Extract and Sanitize filenames
     t1_fn = session_data['t1_filename']
     
-    # Fix FLAIR vs lair issue
     flair_raw = session_data.get('flair_filename', None)
     flair_fn = sanitize_filename(flair_raw, ["lair"], verbose)
     
-    # Fix BOLD vs fMRI/func issue
     rsf_raw = session_data.get('rsf_filenames', [])
     rsf_fns = [sanitize_filename(f, ["fMRI", "func"], verbose) for f in rsf_raw]
     
-    # DTI and NM usually match ("dwi", "NM"), but sanitizing checks don't hurt
     dti_fns = session_data.get('dti_filenames', [])
     nm_fns = session_data.get('nm_filenames', [])
 
-    # Mock source dir for antspymm requirement
     mock_source_dir = os.path.dirname(os.path.dirname(t1_fn)) 
     
     try:
         if verbose:
-            print(f"Generating MM DataFrame for {sub_id} - {date_id}")
+            print(f"Generating MM DataFrame for {sub_id} {separator} {date_id}")
             
         study_csv = antspymm.generate_mm_dataframe(
             projectID=project_id,
@@ -128,7 +105,6 @@ def process_session(session_data, output_root, project_id="ANTsX",
             nm_filenames=nm_fns
         )
         
-        # Clean up columns that are None/NaN
         study_csv_clean = study_csv.dropna(axis=1)
         
         # 3. Get Standard Templates
@@ -151,10 +127,11 @@ def process_session(session_data, output_root, project_id="ANTsX",
 
         # 4. Run the Pipeline
         if verbose:
-            print(f"Starting execution for {sub_id}...")
+            print(f"Starting execution for {sub_id} using separator '{separator}'...")
             
         antspymm.mm_csv(
             study_csv_clean,
+            mysep=separator,  # PASS THE SEPARATOR HERE
             dti_motion_correct=dti_moco,
             dti_denoise=denoise_dti,
             normalization_template=template,
@@ -170,3 +147,4 @@ def process_session(session_data, output_root, project_id="ANTsX",
         import traceback
         traceback.print_exc()
         return False
+

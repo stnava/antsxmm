@@ -19,19 +19,19 @@ except ImportError:
     except:
         __version__ = "0.0.0-dev"
 
-def run_study(bids_dir, output_dir, project, denoise_dti=True, participant_label=None, session_label=None):
+def run_study(bids_dir, output_dir, project, denoise_dti=True, 
+              participant_label=None, session_label=None, separator='+'):
+              
     print(f"Parsing BIDS layout from: {bids_dir}")
     layout_df = parse_antsxbids_layout(bids_dir)
     
     # Filter for specific participant if requested
     if participant_label:
-        # CHANGED: Exact match filtering (e.g. user must pass 'sub-211239')
         layout_df = layout_df[layout_df['subjectID'] == participant_label]
         print(f"Filtering for subject: {participant_label}")
 
     # Filter for specific session if requested
     if session_label:
-        # CHANGED: Exact match filtering (e.g. user must pass 'ses-20230405')
         layout_df = layout_df[layout_df['date'] == session_label]
         print(f"Filtering for session: {session_label}")
 
@@ -50,7 +50,8 @@ def run_study(bids_dir, output_dir, project, denoise_dti=True, participant_label
             output_root=output_dir, 
             project_id=project,
             denoise_dti=denoise_dti,
-            dti_moco='SyN'
+            dti_moco='SyN',
+            separator=separator
         )
         if not success:
             failures.append(f"{row['subjectID']}_{row['date']}")
@@ -68,8 +69,9 @@ def run_study(bids_dir, output_dir, project, denoise_dti=True, participant_label
 @click.option('--denoise/--no-denoise', default=True, help='Apply DTI denoising')
 @click.option('--participant-label', help='Specific subject ID to process (e.g. sub-211239)')
 @click.option('--session-label', help='Specific session ID to process (e.g. ses-20230405)')
+@click.option('--separator', default='+', help='Character to separate filename components (default: +)')
 @click.version_option(__version__)
-def main(bids_dir, output_dir, project, dl_weights, denoise, participant_label, session_label):
+def main(bids_dir, output_dir, project, dl_weights, denoise, participant_label, session_label, separator):
     """
     ANTSXMM: Streamlined ANTsPyMM wrapper for ANTSXBIDS output.
     """
@@ -80,8 +82,7 @@ def main(bids_dir, output_dir, project, dl_weights, denoise, participant_label, 
         antspyt1w.get_data(force_download=True)
         antspymm.get_data(force_download=True)
 
-    run_study(bids_dir, output_dir, project, denoise, participant_label, session_label)
+    run_study(bids_dir, output_dir, project, denoise, participant_label, session_label, separator)
 
 if __name__ == '__main__': # pragma: no cover
     main()
-
