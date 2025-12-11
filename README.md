@@ -17,3 +17,19 @@ antsxmm BIDS_TEST/ PROCESSED_OUTPUT/ --project PPMI
 # Force download templates
 antsxmm BIDS_TEST/ PROCESSED_OUTPUT/ --project PPMI --dl-weights
 ```
+
+
+
+## Testing 
+
+Commands to run:
+
+```bash
+pip install -e ."
+pip install .[test]"
+pytest --cov=antsxmm --cov-report=term-missing tests/"
+echo "You can now run a specific subject:"
+echo " antsxmm BIDS_TEST/ PROCESSED_OUTPUT/ --project PPMI \ 
+    --participant-label 211239 --session-label 20230405 "
+echo "=========================================================="
+```
