@@ -43,17 +43,23 @@ def run_study(bids_dir, output_dir, project, denoise_dti=True,
     os.makedirs(output_dir, exist_ok=True)
     
     failures = []
+    wide_tables = []
     
     for idx, row in tqdm(layout_df.iterrows(), total=layout_df.shape[0]):
-        success = process_session(
+        result = process_session(
             row, 
             output_root=output_dir, 
             project_id=project,
             denoise_dti=denoise_dti,
             dti_moco='SyN',
-            separator=separator
+            separator=separator,
+            build_wide_table=True
         )
-        if not success:
+        
+        if result['success']:
+            if result['wide_df'] is not None and not result['wide_df'].empty:
+                wide_tables.append(result['wide_df'])
+        else:
             failures.append(f"{row['subjectID']}_{row['date']}")
 
     if failures:

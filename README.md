@@ -31,9 +31,9 @@ antsxmm BIDS_TEST/ PROCESSED_OUTPUT/ --project PPMI --dl-weights
 Commands to run:
 
 ```bash
-pip install -e ."
-pip install .[test]"
-pytest --cov=antsxmm --cov-report=term-missing tests/"
+pip install -e .
+pip install ".[test]"
+pytest --cov=antsxmm --cov-report=term-missing tests/
 echo "You can now run a specific subject:"
 echo " antsxmm BIDS_TEST/ PROCESSED_OUTPUT/ --project PPMI \ 
     --participant-label sub-211239 --session-label ses-20230405 "

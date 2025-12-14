@@ -66,6 +66,22 @@ def parse_antsxbids_layout(bids_root):
                 nm_files = sorted([str(p) for p in nm_dir.glob("*NM.nii.gz")])
             data['nm_filenames'] = nm_files
 
+            # 5. Perfusion (ASL) - Placeholder logic, assuming 'perf' folder
+            perf_dir = ses_dir / 'perf'
+            if perf_dir.exists():
+                # Grab the first available ASL file
+                perfs = sorted(list(perf_dir.glob("*.nii.gz")))
+                if perfs:
+                    data['perf_filename'] = str(perfs[0])
+
+            # 6. PET (pet3d) - Placeholder logic, assuming 'pet' folder
+            pet_dir = ses_dir / 'pet'
+            if pet_dir.exists():
+                # Grab the first available PET file
+                pets = sorted(list(pet_dir.glob("*.nii.gz")))
+                if pets:
+                    data['pet3d_filename'] = str(pets[0])
+
             # Only add if we have a T1
             if 't1_filename' in data:
                 sessions_data.append(data)

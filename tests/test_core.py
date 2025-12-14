@@ -1,9 +1,9 @@
 import pytest
 from unittest.mock import MagicMock
-from antsxmm.core import process_session, sanitize_filename
+from antsxmm.core import process_session, sanitize_filename, extract_image_id
 import os
 import pandas as pd
-import antspymm # FIX: Added import
+import antspymm 
 
 def test_sanitize_filename(tmp_path):
     # Test 1: File is already good
@@ -17,19 +17,31 @@ def test_sanitize_filename(tmp_path):
     bad_case.touch()
     res = sanitize_filename(str(bad_case), ["lair"])
     
-    # The result might be 'bad_Flair.nii.gz' or 'bad_flair.nii.gz'
-    # Both satisfy the requirement "lair" in filename
-    assert "lair" in os.path.basename(res) 
+    # Assertion fix: Check that the required string is present (case-sensitive as required by antspymm)
+    # The sanitization function ensures 'lair' is injected or replaced.
+    assert "lair" in os.path.basename(res)
     assert os.path.islink(res)
     
     # Test 3: File needs arbitrary injection (bold -> func)
     bold_file = tmp_path / "image_bold.nii.gz"
     bold_file.touch()
     res = sanitize_filename(str(bold_file), ["fMRI", "func"])
-    # If injection logic appends, it might be image_bold_fMRI.nii.gz
-    # If regex replace logic worked (no match), it falls back to inject
     assert "func" in res or "fMRI" in res
     assert os.path.islink(res)
+
+def test_extract_image_id():
+    # Test valid BIDS with run
+    assert extract_image_id("sub-01_ses-01_r0001_T1w.nii.gz") == "r0001"
+    assert extract_image_id("sub-01_ses-01_run-02_T1w.nii.gz") == "run-02"
+    
+    # Test path input
+    assert extract_image_id("/path/to/sub-01_ses-01_r0001_T1w.nii.gz") == "r0001"
+    
+    # Test fallback
+    assert extract_image_id("sub-01_ses-01_T1w.nii.gz") == "000"
+    
+    # Test middle of string
+    assert extract_image_id("T1w_r123_something.nii") == "r123"
 
 def test_process_session_success(mock_session_data, tmp_path, mocker):
     mocker.patch("antspymm.generate_mm_dataframe", return_value=pd.DataFrame({'A': [1]}))
@@ -41,16 +53,18 @@ def test_process_session_success(mock_session_data, tmp_path, mocker):
 
     output_dir = tmp_path / "processed"
     
-    success = process_session(mock_session_data, str(output_dir), verbose=True)
+    # Mock t1 filename to ensure it has a run ID to test extraction logic
+    mock_session_data['t1_filename'] = "/tmp/sub-01_ses-01_r999_T1w.nii.gz"
+
+    result = process_session(mock_session_data, str(output_dir), verbose=True, build_wide_table=False)
     
-    assert success is True
-    # Verify sanitization happened on FLAIR
-    call_args = antspymm.generate_mm_dataframe.call_args
-    if 'flair_filename' in call_args.kwargs:
-        # Check that the sanitized name passed to antspymm contains the required 'lair'
-        assert "lair" in call_args.kwargs['flair_filename']
+    assert result['success'] is True
+    
+    # Verify generate_mm_dataframe was called with the extracted run ID (r999) NOT '000'
+    gen_call_args = antspymm.generate_mm_dataframe.call_args
+    assert gen_call_args.kwargs['imageUniqueID'] == 'r999'
 
 def test_process_session_error(mock_session_data, tmp_path, mocker):
     mocker.patch("antspymm.generate_mm_dataframe", side_effect=Exception("Boom"))
-    success = process_session(mock_session_data, str(tmp_path))
-    assert success is False
+    result = process_session(mock_session_data, str(tmp_path))
+    assert result['success'] is False
