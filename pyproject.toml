@@ -37,6 +37,8 @@ include = ["antsxmm*"]
 [tool.setuptools_scm]
 write_to = "antsxmm/_version.py"
 fallback_version = "0.0.0-dev"
+version_scheme = "guess-next-dev"
+local_scheme = "no-local-version"  # <--- This suppresses +g<commit>
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
