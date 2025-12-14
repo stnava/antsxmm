@@ -10,5 +10,8 @@ except ImportError:
 from .bids import parse_antsxbids_layout
 from .core import process_session
 from .pipeline import run_study
+from .core import bind_mm_rows
+from .core import check_modality_order
+from .core import build_wide_table_from_mmwide
 
-__all__ = ['parse_antsxbids_layout', 'process_session', 'run_study', '__version__']
+__all__ = ['parse_antsxbids_layout', 'build_wide_table_from_mmwide', 'bind_mm_rows',  'process_session', 'run_study', '__version__']
