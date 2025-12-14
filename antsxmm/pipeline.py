@@ -81,7 +81,7 @@ def main(bids_dir, output_dir, project, dl_weights, denoise, participant_label, 
     """
     ANTSXMM: Streamlined ANTsPyMM wrapper for ANTSXBIDS output.
     """
-    
+    print(f"antsxmm {__version__}")
     # 1. Setup Data
     if dl_weights:
         print("Downloading templates and weights...")
