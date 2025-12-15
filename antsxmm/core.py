@@ -46,56 +46,62 @@ def get_modality_variant(filename, base_modality, sep):
 def sanitize_and_stage_file(filepath, project, subject, date, base_modality, image_id, sep, staging_root, verbose=False):
     """
     Stages a file into a strict NRG directory structure in tmp.
-    ALSO stages accompanying .bval, .bvec, and .json files if they exist.
     """
     if not filepath:
         return None, None
 
     modality = get_modality_variant(filepath, base_modality, sep)
     
-    # Construct base name without extension for sidecar search
+    # Ensure extension is handled
     name = os.path.basename(filepath)
     if name.endswith(".nii.gz"):
-        base_name = name[:-7]
         ext = ".nii.gz"
     elif name.endswith(".nii"):
-        base_name = name[:-4]
         ext = ".nii"
     else:
-        base_name, ext = os.path.splitext(name)
+        ext = os.path.splitext(name)[1]
 
-    # FORCE NRG FILENAME base
-    new_filename_base = f"{project}{sep}{subject}{sep}{date}{sep}{modality}{sep}{image_id}"
+    # FORCE NRG FILENAME
+    new_filename = f"{project}{sep}{subject}{sep}{date}{sep}{modality}{sep}{image_id}{ext}"
     
     # Construct NRG path
     dest_dir = os.path.join(staging_root, project, subject, date, modality, image_id)
     os.makedirs(dest_dir, exist_ok=True)
     
-    # Helper to symlink a file
-    def stage_one(src, dst_name):
-        dst = os.path.join(dest_dir, dst_name)
-        if os.path.exists(dst) or os.path.islink(dst):
-            os.remove(dst)
-        os.symlink(os.path.abspath(src), dst)
-        return dst
-
-    # Stage the main image
-    symlink_path = stage_one(filepath, new_filename_base + ext)
+    symlink_path = os.path.join(dest_dir, new_filename)
+    
+    if os.path.exists(symlink_path) or os.path.islink(symlink_path):
+        os.remove(symlink_path)
+        
+    os.symlink(os.path.abspath(filepath), symlink_path)
     
     if verbose:
-        print(f"  Staged: {name} -> .../{modality}/{image_id}/{new_filename_base}{ext}")
-
+        print(f"  Staged: {name} -> .../{modality}/{image_id}/{new_filename}")
+        
     # Stage sidecars (bval, bvec, json)
+    # Important: Base name for sidecars matches the new filename base
+    new_filename_base = f"{project}{sep}{subject}{sep}{date}{sep}{modality}{sep}{image_id}"
+    
+    if name.endswith(".nii.gz"):
+        orig_base = name[:-7]
+    elif name.endswith(".nii"):
+        orig_base = name[:-4]
+    else:
+        orig_base = os.path.splitext(name)[0]
+        
     src_dir = os.path.dirname(filepath)
     sidecars = [".bval", ".bvec", ".json"]
     
     for side_ext in sidecars:
-        src_side = os.path.join(src_dir, base_name + side_ext)
+        src_side = os.path.join(src_dir, orig_base + side_ext)
         if os.path.exists(src_side):
-            stage_one(src_side, new_filename_base + side_ext)
+            dst_side = os.path.join(dest_dir, new_filename_base + side_ext)
+            if os.path.exists(dst_side) or os.path.islink(dst_side):
+                os.remove(dst_side)
+            os.symlink(os.path.abspath(src_side), dst_side)
             if verbose:
-                print(f"    + Sidecar: {base_name}{side_ext} -> {new_filename_base}{side_ext}")
-        
+                print(f"    + Sidecar: {orig_base}{side_ext} -> {new_filename_base}{side_ext}")
+
     return symlink_path, modality
 
 def print_expected_tree(output_root, project_id, sub_id, date_id, image_uid, 
@@ -188,7 +194,6 @@ def check_modality_order(ordered_data, expected_order):
     filtered_expected = [mod for mod in expected_order if mod in actual_mods]
 
     if actual_mods != filtered_expected:
-        # Warn but don't fail, data might still be usable
         print(f"Warning: Modality order mismatch. Expected: {filtered_expected}, Got: {actual_mods}")
     return True
 
@@ -342,24 +347,28 @@ def process_session(session_data, output_root, project_id="ANTsX",
 
     # 4. Stage Files
     # T1w
-    t1_path, _ = sanitize_and_stage_file(t1_fn, project_id, sub_id, date_id, "T1w", image_uid, separator, staging_root, verbose)
+    t1_path, _, _ = sanitize_and_stage_file(t1_fn, project_id, sub_id, date_id, "T1w", image_uid, separator, staging_root, verbose)
 
     # FLAIR
     flair_raw = session_data.get('flair_filename', None)
     flair_path, _ = sanitize_and_stage_file(flair_raw, project_id, sub_id, date_id, "T2Flair", image_uid, separator, staging_root, verbose)
     flair_info = (flair_path, _)
 
-    # rsfMRI (Handle List & Variants)
+    # rsfMRI
     rsf_raw = session_data.get('rsf_filenames', [])
     rsf_infos = []
     rsf_paths = []
     for f in rsf_raw:
+        # Pass image_uid as-is. sanitize_and_stage_file will construct unique folder name based on variant.
+        # But for files sharing same ID (r0001) but different variants (LR/RL), 
+        # sanitize_and_stage_file logic will put them in different folders: 
+        # .../rsfMRILR/r0001/file.nii.gz and .../rsfMRIRL/r0001/file.nii.gz
         path, mod = sanitize_and_stage_file(f, project_id, sub_id, date_id, "rsfMRI", image_uid, separator, staging_root, verbose)
         if path:
             rsf_infos.append((path, mod))
             rsf_paths.append(path)
 
-    # DTI (Handle List & Variants)
+    # DTI
     dti_raw = session_data.get('dti_filenames', [])
     dti_infos = []
     dti_paths = []
@@ -369,7 +378,7 @@ def process_session(session_data, output_root, project_id="ANTsX",
             dti_infos.append((path, mod))
             dti_paths.append(path)
 
-    # NM (Handle List - Unique Run IDs)
+    # NM
     nm_raw = session_data.get('nm_filenames', [])
     nm_infos = []
     nm_paths = []
@@ -378,7 +387,7 @@ def process_session(session_data, output_root, project_id="ANTsX",
         if rid == "000": rid = image_uid
         path, mod = sanitize_and_stage_file(f, project_id, sub_id, date_id, "NM2DMT", rid, separator, staging_root, verbose)
         if path:
-            nm_infos.append((path, mod))
+            nm_infos.append((path, mod, rid))
             nm_paths.append(path)
 
     # Perf
@@ -422,24 +431,10 @@ def process_session(session_data, output_root, project_id="ANTsX",
             pet3d_filename=pet_path
         )
         
-        # Explicitly set IDs in dataframe to match the ones we used for staging
-        if 'flairid' in study_csv.columns and flair_path: 
-            study_csv['flairid'] = image_uid
+        # KEY FIX: REMOVE MANUAL OVERRIDES.
+        # Let generate_mm_dataframe populate columns with the paths we passed.
+        # docsamson will read the PATHS from these columns and verify existence.
         
-        # Align IDs for DTI/RSF
-        if rsf_infos:
-            if 'rsfid1' in study_csv.columns: study_csv['rsfid1'] = image_uid
-            if 'rsfid2' in study_csv.columns and len(rsf_infos) > 1: study_csv['rsfid2'] = image_uid
-            
-        if dti_infos:
-            if 'dtid1' in study_csv.columns: study_csv['dtid1'] = image_uid
-            if 'dtid2' in study_csv.columns and len(dti_infos) > 1: study_csv['dtid2'] = image_uid
-
-        if perf_path and 'perfid' in study_csv.columns: 
-            study_csv['perfid'] = image_uid
-        if pet_path and 'pet3did' in study_csv.columns: 
-            study_csv['pet3did'] = image_uid
-
         study_csv_clean = study_csv.dropna(axis=1)
 
         try:
