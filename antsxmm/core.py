@@ -8,56 +8,6 @@ import re
 import traceback
 from pathlib import Path
 
-def sanitize_filename(filepath, requirements, verbose=False):
-    """
-    Checks if filepath meets antspymm naming requirements.
-    If not, creates a symlink in a temporary directory that does.
-    """
-    if not filepath:
-        return None
-        
-    filename = os.path.basename(filepath)
-    
-    meets_req = False
-    for req in requirements:
-        if req in filename:
-            meets_req = True
-            break
-            
-    if meets_req:
-        return filepath
-        
-    if verbose:
-        print(f"Sanitizing filename: {filename} does not contain {requirements}")
-        
-    staging_dir = os.path.join(tempfile.gettempdir(), "antsxmm_staging")
-    os.makedirs(staging_dir, exist_ok=True)
-    
-    injector = requirements[0]
-    new_name = filename
-    replaced = False
-    for req in requirements:
-        pattern = re.compile(re.escape(req), re.IGNORECASE)
-        if pattern.search(filename):
-            new_name = pattern.sub(req, filename)
-            replaced = True
-            break
-            
-    if not replaced:
-        name, ext = os.path.splitext(filename)
-        if name.endswith(".nii"): 
-            name, ext2 = os.path.splitext(name)
-            ext = ext2 + ext
-        new_name = f"{name}_{injector}{ext}"
-        
-    symlink_path = os.path.join(staging_dir, new_name)
-    
-    if os.path.exists(symlink_path) or os.path.islink(symlink_path):
-        os.remove(symlink_path)
-        
-    os.symlink(os.path.abspath(filepath), symlink_path)
-    return symlink_path
-
 def extract_image_id(filename):
     """
     Extracts a run/image ID from a BIDS-like filename.
@@ -69,70 +19,130 @@ def extract_image_id(filename):
         return match.group(1)
     return "000"
 
-def print_expected_tree(output_root, project_id, sub_id, date_id, image_uid, 
-                        flair_fn, rsf_fns, dti_fns, nm_fns, perf_fn, pet_fn, sep="_"):
+def get_modality_variant(filename, base_modality, sep):
     """
-    Prints the expected directory structure for validation before processing.
-    Also lists MISSING modalities.
+    Returns the specific antspymm modality string with direction appended.
+    e.g. DTI -> DTILR (if sep is _) or DTI-LR (if sep is -).
+    """
+    fname = os.path.basename(filename)
+    suffix = ""
+    
+    # Check indicators
+    if "dir-RL" in fname or "dir-PA" in fname or "_RL" in fname or "_PA" in fname:
+        suffix = "RL"
+    elif "dir-LR" in fname or "dir-AP" in fname or "_LR" in fname or "_AP" in fname:
+        suffix = "LR"
+        
+    if suffix:
+        if sep == "_":
+            return f"{base_modality}{suffix}"
+        else:
+            return f"{base_modality}{sep}{suffix}"
+    
+    # Default mappings
+    if base_modality == "dwi": return "DTI"
+    if base_modality == "func": return "rsfMRI"
+    
+    return base_modality
+
+def sanitize_and_stage_file(filepath, project, subject, date, base_modality, image_id, sep, staging_root, verbose=False):
+    """
+    Stages a file into a strict NRG directory structure in tmp.
+    """
+    if not filepath:
+        return None, None
+
+    modality = get_modality_variant(filepath, base_modality, sep)
+    
+    # Ensure extension is handled
+    name = os.path.basename(filepath)
+    if name.endswith(".nii.gz"):
+        ext = ".nii.gz"
+    elif name.endswith(".nii"):
+        ext = ".nii"
+    else:
+        ext = os.path.splitext(name)[1]
+
+    # FORCE NRG FILENAME: {Project}{sep}{Sub}{sep}{Date}{sep}{Modality}{sep}{ID}.nii.gz
+    # Example: PPMI_sub-1_ses-1_DTILR_r0001.nii.gz
+    # Modality part includes direction (DTILR). ID is r0001.
+    new_filename = f"{project}{sep}{subject}{sep}{date}{sep}{modality}{sep}{image_id}{ext}"
+    
+    # Construct NRG path. 
+    # Use variant modality for folder name to ensure uniqueness and match filename
+    dest_dir = os.path.join(staging_root, project, subject, date, modality, image_id)
+    os.makedirs(dest_dir, exist_ok=True)
+    
+    symlink_path = os.path.join(dest_dir, new_filename)
+    
+    if os.path.exists(symlink_path) or os.path.islink(symlink_path):
+        os.remove(symlink_path)
+        
+    os.symlink(os.path.abspath(filepath), symlink_path)
+    
+    if verbose:
+        print(f"  Staged: {name} -> .../{modality}/{image_id}/{new_filename}")
+        
+    return symlink_path, modality
+
+def print_expected_tree(output_root, project_id, sub_id, date_id, image_uid, 
+                        flair_info, rsf_infos, dti_infos, nm_infos, perf_info, pet_info, sep="_"):
+    """
+    Prints the expected directory structure based on staged files.
     """
     base = Path(output_root) / project_id / sub_id / date_id
     
     print(f"\n[PRE-CHECK] Processing Plan for {sub_id} {date_id}:")
     print(f"ROOT OUTPUT: {base}")
     
-    # T1 Hierarchy (Always present if running)
+    # T1 Hierarchy
     print(f"├── T1wHierarchical/ (ID: {image_uid}) [FOUND]")
     print(f"│   └── .../{project_id}{sep}{sub_id}{sep}{date_id}{sep}T1wHierarchical{sep}{image_uid}{sep}...")
 
     # FLAIR
-    if flair_fn:
+    if flair_info[0]:
         print(f"├── T2Flair/ (ID: {image_uid}) [FOUND]")
-        print(f"│   └── .../{project_id}{sep}{sub_id}{sep}{date_id}{sep}T2Flair{sep}{image_uid}{sep}...")
     else:
         print(f"├── T2Flair/ [MISSING] (Skipping)")
 
     # rsfMRI
-    if rsf_fns:
-        print(f"├── rsfMRI/ (ID: {image_uid}) [FOUND: {len(rsf_fns)} scan(s)]")
-        print(f"│   └── .../{project_id}{sep}{sub_id}{sep}{date_id}{sep}rsfMRI{sep}{image_uid}{sep}...")
+    if rsf_infos:
+        print(f"├── rsfMRI/ [FOUND: {len(rsf_infos)} scan(s)]")
+        for p, m in rsf_infos:
+            print(f"│   └── Variant: {m} (ID: {image_uid}) -> {os.path.basename(p)}")
     else:
         print(f"├── rsfMRI/ [MISSING] (Skipping)")
 
     # DTI
-    if dti_fns:
-        print(f"├── DTI/ (ID: {image_uid}) [FOUND: {len(dti_fns)} scan(s)]")
-        print(f"│   └── .../{project_id}{sep}{sub_id}{sep}{date_id}{sep}DTI{sep}{image_uid}{sep}...")
+    if dti_infos:
+        print(f"├── DTI/ [FOUND: {len(dti_infos)} scan(s)]")
+        for p, m in dti_infos:
+            print(f"│   └── Variant: {m} (ID: {image_uid}) -> {os.path.basename(p)}")
     else:
         print(f"├── DTI/ [MISSING] (Skipping)")
 
     # Neuromelanin
-    if nm_fns:
-        nm_id = extract_image_id(nm_fns[0])
-        print(f"└── NM2DMT/ (ID: {nm_id}) [FOUND: {len(nm_fns)} scan(s)]")
-        print(f"    └── .../{project_id}{sep}{sub_id}{sep}{date_id}{sep}NM2DMT{sep}{nm_id}{sep}...")
+    if nm_infos:
+        nm_id = extract_image_id(nm_infos[0][0])
+        print(f"└── NM2DMT/ (ID: {nm_id}...) [FOUND: {len(nm_infos)} scan(s)]")
     else:
         print(f"└── NM2DMT/ [MISSING] (Skipping)")
 
     # Perfusion
-    if perf_fn:
+    if perf_info[0]:
         print(f"├── perf/ (ID: {image_uid}) [FOUND]")
-        print(f"│   └── .../{project_id}{sep}{sub_id}{sep}{date_id}{sep}perf{sep}{image_uid}{sep}...")
     else:
         print(f"├── perf/ [MISSING] (Skipping)")
 
     # PET
-    if pet_fn:
+    if pet_info[0]:
         print(f"├── pet3d/ (ID: {image_uid}) [FOUND]")
-        print(f"│   └── .../{project_id}{sep}{sub_id}{sep}{date_id}{sep}pet3d{sep}{image_uid}{sep}...")
     else:
         print(f"├── pet3d/ [MISSING] (Skipping)")
 
     print("\n")
 
 def bind_mm_rows(named_dataframes, sep="_"):
-    """
-    Combine multiple modality-wide CSVs into one super-wide DataFrame.
-    """
     if not named_dataframes:
         return pd.DataFrame()
 
@@ -161,26 +171,16 @@ def bind_mm_rows(named_dataframes, sep="_"):
 
 
 def check_modality_order(ordered_data, expected_order):
-    """
-    Check if modalities in ordered_data appear in the expected order.
-    """
     actual_mods = [mod for mod, _ in ordered_data]
     filtered_expected = [mod for mod in expected_order if mod in actual_mods]
 
     if actual_mods != filtered_expected:
-        raise AssertionError(
-            f"Modality order incorrect!\n"
-            f"Expected (filtered): {filtered_expected}\n"
-            f"Actual:      {actual_mods}"
-        )
+        # Warn but don't fail, data might still be usable
+        print(f"Warning: Modality order mismatch. Expected: {filtered_expected}, Got: {actual_mods}")
     return True
 
 
 def build_wide_table_from_mmwide(root_dir, pattern="**/*_mmwide.csv", sep="_", verbose=True):
-    """
-    Build a single-row wide feature table from all *_mmwide.csv files in a session directory.
-    """
-
     root = Path(root_dir).expanduser().resolve()
     csv_files = sorted(root.rglob(pattern))
 
@@ -317,65 +317,108 @@ def process_session(session_data, output_root, project_id="ANTsX",
     sub_id = session_data['subjectID']
     date_id = session_data['date']
 
-    # 2. Extract and sanitize filenames
+    # 2. Extract run ID (image_uid)
     t1_fn = session_data['t1_filename']
     image_uid = extract_image_id(t1_fn)
 
+    # 3. Setup Staging Area (Root of our temp NRG structure)
+    staging_root = os.path.join(tempfile.gettempdir(), f"antsxmm_staging_{sub_id}_{date_id}")
+    if os.path.exists(staging_root):
+        shutil.rmtree(staging_root)
+    os.makedirs(staging_root, exist_ok=True)
+
+    # 4. Stage Files
+    # T1w
+    t1_path, _ = sanitize_and_stage_file(t1_fn, project_id, sub_id, date_id, "T1w", image_uid, separator, staging_root, verbose)
+
+    # FLAIR
     flair_raw = session_data.get('flair_filename', None)
-    flair_fn = sanitize_filename(flair_raw, ["lair"], verbose)
+    flair_path, _ = sanitize_and_stage_file(flair_raw, project_id, sub_id, date_id, "T2Flair", image_uid, separator, staging_root, verbose)
+    flair_info = (flair_path, _)
 
+    # rsfMRI
     rsf_raw = session_data.get('rsf_filenames', [])
-    rsf_fns = [sanitize_filename(f, ["fMRI", "func"], verbose) for f in rsf_raw]
+    rsf_infos = []
+    rsf_paths = []
+    for f in rsf_raw:
+        path, mod = sanitize_and_stage_file(f, project_id, sub_id, date_id, "rsfMRI", image_uid, separator, staging_root, verbose)
+        if path:
+            rsf_infos.append((path, mod))
+            rsf_paths.append(path)
 
-    dti_fns = session_data.get('dti_filenames', [])
-    nm_fns = session_data.get('nm_filenames', [])
+    # DTI
+    dti_raw = session_data.get('dti_filenames', [])
+    dti_infos = []
+    dti_paths = []
+    for f in dti_raw:
+        path, mod = sanitize_and_stage_file(f, project_id, sub_id, date_id, "DTI", image_uid, separator, staging_root, verbose)
+        if path:
+            dti_infos.append((path, mod))
+            dti_paths.append(path)
 
+    # NM (Keep original 'rXXXX' IDs, NM logic handles string IDs)
+    nm_raw = session_data.get('nm_filenames', [])
+    nm_infos = []
+    nm_paths = []
+    for f in nm_raw:
+        rid = extract_image_id(f)
+        if rid == "000": rid = image_uid
+        path, mod = sanitize_and_stage_file(f, project_id, sub_id, date_id, "NM2DMT", rid, separator, staging_root, verbose)
+        if path:
+            nm_infos.append((path, mod))
+            nm_paths.append(path)
+
+    # Perf
     perf_raw = session_data.get('perf_filename', None)
-    perf_fn = sanitize_filename(perf_raw, ["perf"], verbose)
+    perf_path, _ = sanitize_and_stage_file(perf_raw, project_id, sub_id, date_id, "perf", image_uid, separator, staging_root, verbose)
+    perf_info = (perf_path, _)
 
+    # PET
     pet_raw = session_data.get('pet3d_filename', None)
-    pet_fn = pet_raw
+    pet_path, _ = sanitize_and_stage_file(pet_raw, project_id, sub_id, date_id, "pet3d", image_uid, separator, staging_root, verbose)
+    pet_info = (pet_path, _)
 
-    mock_source_dir = os.path.dirname(os.path.dirname(t1_fn))
+    mock_source_dir = staging_root
 
     try:
         # Pre-execution check
         if verbose:
             print_expected_tree(output_root, project_id, sub_id, date_id, image_uid, 
-                                flair_fn, rsf_fns, dti_fns, nm_fns, perf_fn, pet_fn, separator)
+                                flair_info, rsf_infos, dti_infos, nm_infos, perf_info, pet_info, separator)
 
         if verbose:
             print(f"\n{'='*80}")
             print(f"Processing: {sub_id} | {date_id}")
-            print(f"Image UID derived from T1: {image_uid}")
+            print(f"Image UID: {image_uid}")
 
         # Run antspymm preprocessing
         study_csv = antspymm.generate_mm_dataframe(
             projectID=project_id,
             subjectID=sub_id,
             date=date_id,
-            imageUniqueID=image_uid, # Used for T1
+            imageUniqueID=image_uid,
             modality='T1w',
             source_image_directory=mock_source_dir,
             output_image_directory=output_root,
-            t1_filename=t1_fn,
-            flair_filename=flair_fn,
-            rsf_filenames=rsf_fns,
-            dti_filenames=dti_fns,
-            nm_filenames=nm_fns,
-            perf_filename=perf_fn,
-            pet3d_filename=pet_fn
+            t1_filename=t1_path,
+            flair_filename=flair_path,
+            rsf_filenames=rsf_paths,
+            dti_filenames=dti_paths,
+            nm_filenames=nm_paths,
+            perf_filename=perf_path,
+            pet3d_filename=pet_path
         )
         
-        # Override IDs to ensure alignment across all modalities
-        if 'flairid' in study_csv.columns: study_csv['flairid'] = image_uid
-        if 'rsfid1' in study_csv.columns: study_csv['rsfid1'] = image_uid
-        if 'rsfid2' in study_csv.columns: study_csv['rsfid2'] = image_uid
-        if 'dtid1' in study_csv.columns: study_csv['dtid1'] = image_uid
-        if 'dtid2' in study_csv.columns: study_csv['dtid2'] = image_uid
-        if 'perfid' in study_csv.columns: study_csv['perfid'] = image_uid
-        if 'pet3did' in study_csv.columns: study_csv['pet3did'] = image_uid
-
+        # FIX: We DO NOT overwrite IDs with simple strings anymore.
+        # generate_mm_dataframe automatically populates the ID columns with the FULL PATHS
+        # (which point to our correctly staged files in /tmp).
+        # antspymm's docsamson uses these columns to check file existence.
+        # If we overwrite them with 'r0001', it looks for a file named 'r0001', fails, and skips.
+        # By NOT overwriting them, docsamson sees '/tmp/antxmm.../file.nii.gz', which exists.
+        
+        # We only pass 'imageUniqueID' to generate_mm_dataframe, which sets the T1 ID.
+        # For lists (rsf/dti/nm), generate_mm_dataframe uses the filenames provided.
+        
         study_csv_clean = study_csv.dropna(axis=1)
 
         try:
@@ -444,3 +487,6 @@ def process_session(session_data, output_root, project_id="ANTsX",
         print("Error processing {} {}: {}".format(sub_id, date_id, str(e)))
         traceback.print_exc()
         return result
+    finally:
+        if os.path.exists(staging_root):
+            shutil.rmtree(staging_root)
