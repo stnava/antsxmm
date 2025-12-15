@@ -22,12 +22,10 @@ def extract_image_id(filename):
 def get_modality_variant(filename, base_modality, sep):
     """
     Returns the specific antspymm modality string with direction appended.
-    e.g. DTI -> DTILR (if sep is _) or DTI-LR (if sep is -).
     """
     fname = os.path.basename(filename)
     suffix = ""
     
-    # Check indicators
     if "dir-RL" in fname or "dir-PA" in fname or "_RL" in fname or "_PA" in fname:
         suffix = "RL"
     elif "dir-LR" in fname or "dir-AP" in fname or "_LR" in fname or "_AP" in fname:
@@ -48,40 +46,55 @@ def get_modality_variant(filename, base_modality, sep):
 def sanitize_and_stage_file(filepath, project, subject, date, base_modality, image_id, sep, staging_root, verbose=False):
     """
     Stages a file into a strict NRG directory structure in tmp.
+    ALSO stages accompanying .bval, .bvec, and .json files if they exist.
     """
     if not filepath:
         return None, None
 
     modality = get_modality_variant(filepath, base_modality, sep)
     
-    # Ensure extension is handled
+    # Construct base name without extension for sidecar search
     name = os.path.basename(filepath)
     if name.endswith(".nii.gz"):
+        base_name = name[:-7]
         ext = ".nii.gz"
     elif name.endswith(".nii"):
+        base_name = name[:-4]
         ext = ".nii"
     else:
-        ext = os.path.splitext(name)[1]
+        base_name, ext = os.path.splitext(name)
 
-    # FORCE NRG FILENAME: {Project}{sep}{Sub}{sep}{Date}{sep}{Modality}{sep}{ID}.nii.gz
-    # Example: PPMI_sub-1_ses-1_DTILR_r0001.nii.gz
-    # Modality part includes direction (DTILR). ID is r0001.
-    new_filename = f"{project}{sep}{subject}{sep}{date}{sep}{modality}{sep}{image_id}{ext}"
+    # FORCE NRG FILENAME base
+    new_filename_base = f"{project}{sep}{subject}{sep}{date}{sep}{modality}{sep}{image_id}"
     
-    # Construct NRG path. 
-    # Use variant modality for folder name to ensure uniqueness and match filename
+    # Construct NRG path
     dest_dir = os.path.join(staging_root, project, subject, date, modality, image_id)
     os.makedirs(dest_dir, exist_ok=True)
     
-    symlink_path = os.path.join(dest_dir, new_filename)
-    
-    if os.path.exists(symlink_path) or os.path.islink(symlink_path):
-        os.remove(symlink_path)
-        
-    os.symlink(os.path.abspath(filepath), symlink_path)
+    # Helper to symlink a file
+    def stage_one(src, dst_name):
+        dst = os.path.join(dest_dir, dst_name)
+        if os.path.exists(dst) or os.path.islink(dst):
+            os.remove(dst)
+        os.symlink(os.path.abspath(src), dst)
+        return dst
+
+    # Stage the main image
+    symlink_path = stage_one(filepath, new_filename_base + ext)
     
     if verbose:
-        print(f"  Staged: {name} -> .../{modality}/{image_id}/{new_filename}")
+        print(f"  Staged: {name} -> .../{modality}/{image_id}/{new_filename_base}{ext}")
+
+    # Stage sidecars (bval, bvec, json)
+    src_dir = os.path.dirname(filepath)
+    sidecars = [".bval", ".bvec", ".json"]
+    
+    for side_ext in sidecars:
+        src_side = os.path.join(src_dir, base_name + side_ext)
+        if os.path.exists(src_side):
+            stage_one(src_side, new_filename_base + side_ext)
+            if verbose:
+                print(f"    + Sidecar: {base_name}{side_ext} -> {new_filename_base}{side_ext}")
         
     return symlink_path, modality
 
@@ -336,7 +349,7 @@ def process_session(session_data, output_root, project_id="ANTsX",
     flair_path, _ = sanitize_and_stage_file(flair_raw, project_id, sub_id, date_id, "T2Flair", image_uid, separator, staging_root, verbose)
     flair_info = (flair_path, _)
 
-    # rsfMRI
+    # rsfMRI (Handle List & Variants)
     rsf_raw = session_data.get('rsf_filenames', [])
     rsf_infos = []
     rsf_paths = []
@@ -346,7 +359,7 @@ def process_session(session_data, output_root, project_id="ANTsX",
             rsf_infos.append((path, mod))
             rsf_paths.append(path)
 
-    # DTI
+    # DTI (Handle List & Variants)
     dti_raw = session_data.get('dti_filenames', [])
     dti_infos = []
     dti_paths = []
@@ -356,7 +369,7 @@ def process_session(session_data, output_root, project_id="ANTsX",
             dti_infos.append((path, mod))
             dti_paths.append(path)
 
-    # NM (Keep original 'rXXXX' IDs, NM logic handles string IDs)
+    # NM (Handle List - Unique Run IDs)
     nm_raw = session_data.get('nm_filenames', [])
     nm_infos = []
     nm_paths = []
@@ -409,16 +422,24 @@ def process_session(session_data, output_root, project_id="ANTsX",
             pet3d_filename=pet_path
         )
         
-        # FIX: We DO NOT overwrite IDs with simple strings anymore.
-        # generate_mm_dataframe automatically populates the ID columns with the FULL PATHS
-        # (which point to our correctly staged files in /tmp).
-        # antspymm's docsamson uses these columns to check file existence.
-        # If we overwrite them with 'r0001', it looks for a file named 'r0001', fails, and skips.
-        # By NOT overwriting them, docsamson sees '/tmp/antxmm.../file.nii.gz', which exists.
+        # Explicitly set IDs in dataframe to match the ones we used for staging
+        if 'flairid' in study_csv.columns and flair_path: 
+            study_csv['flairid'] = image_uid
         
-        # We only pass 'imageUniqueID' to generate_mm_dataframe, which sets the T1 ID.
-        # For lists (rsf/dti/nm), generate_mm_dataframe uses the filenames provided.
-        
+        # Align IDs for DTI/RSF
+        if rsf_infos:
+            if 'rsfid1' in study_csv.columns: study_csv['rsfid1'] = image_uid
+            if 'rsfid2' in study_csv.columns and len(rsf_infos) > 1: study_csv['rsfid2'] = image_uid
+            
+        if dti_infos:
+            if 'dtid1' in study_csv.columns: study_csv['dtid1'] = image_uid
+            if 'dtid2' in study_csv.columns and len(dti_infos) > 1: study_csv['dtid2'] = image_uid
+
+        if perf_path and 'perfid' in study_csv.columns: 
+            study_csv['perfid'] = image_uid
+        if pet_path and 'pet3did' in study_csv.columns: 
+            study_csv['pet3did'] = image_uid
+
         study_csv_clean = study_csv.dropna(axis=1)
 
         try:
