@@ -8,7 +8,8 @@ A streamlined wrapper for [ANTsPyMM](https://github.com/ANTsX/ANTsPyMM) tailored
 
 See the [slides](docs/BIDS_ANTsPyMM_Seamless_Automation.pdf) for more information.
 
-Documentation of functions [here](http://htmlpreview.github.io/?https://github.com/stnava/antsxmm/blob/main/docs/index.html)
+Documentation of functions [here](https://htmlpreview.github.io/?https://raw.githubusercontent.com/stnava/antsxmm/main/docs/antsxmm.html)
+
 
 ## Quick Start 
 
