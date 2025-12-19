@@ -85,8 +85,8 @@ def main(bids_dir, output_dir, project, dl_weights, denoise, participant_label, 
     # 1. Setup Data
     if dl_weights:
         print("Downloading templates and weights...")
-        antspyt1w.get_data(force_download=True)
-        antspymm.get_data(force_download=True)
+        antspyt1w.get_data(force_download=False)
+        antspymm.get_data(force_download=False)
 
     run_study(bids_dir, output_dir, project, denoise, participant_label, session_label, separator)
 
