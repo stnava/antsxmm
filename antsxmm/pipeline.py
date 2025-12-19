@@ -20,7 +20,7 @@ except ImportError:
         __version__ = "0.0.0-dev"
 
 def run_study(bids_dir, output_dir, project, denoise_dti=True, 
-              participant_label=None, session_label=None, separator='+'):
+              participant_label=None, session_label=None, separator='+', t1_run=None):
               
     print(f"Parsing BIDS layout from: {bids_dir}")
     layout_df = parse_antsxbids_layout(bids_dir)
@@ -43,7 +43,6 @@ def run_study(bids_dir, output_dir, project, denoise_dti=True,
     os.makedirs(output_dir, exist_ok=True)
     
     failures = []
-    wide_tables = []
     
     for idx, row in tqdm(layout_df.iterrows(), total=layout_df.shape[0]):
         result = process_session(
@@ -53,13 +52,11 @@ def run_study(bids_dir, output_dir, project, denoise_dti=True,
             denoise_dti=denoise_dti,
             dti_moco='SyN',
             separator=separator,
-            build_wide_table=True
+            build_wide_table=True,
+            t1_run_match=t1_run  # Pass T1 filter
         )
         
-        if result['success']:
-            if result['wide_df'] is not None and not result['wide_df'].empty:
-                wide_tables.append(result['wide_df'])
-        else:
+        if not result['success']:
             failures.append(f"{row['subjectID']}_{row['date']}")
 
     if failures:
@@ -75,9 +72,10 @@ def run_study(bids_dir, output_dir, project, denoise_dti=True,
 @click.option('--denoise/--no-denoise', default=True, help='Apply DTI denoising')
 @click.option('--participant-label', help='Specific subject ID to process (e.g. sub-211239)')
 @click.option('--session-label', help='Specific session ID to process (e.g. ses-20230405)')
+@click.option('--t1-run', help='Specific T1 run string to match (e.g. r0002)')
 @click.option('--separator', default='+', help='Character to separate filename components (default: +)')
 @click.version_option(__version__)
-def main(bids_dir, output_dir, project, dl_weights, denoise, participant_label, session_label, separator):
+def main(bids_dir, output_dir, project, dl_weights, denoise, participant_label, session_label, t1_run, separator):
     """
     ANTSXMM: Streamlined ANTsPyMM wrapper for ANTSXBIDS output.
     """
@@ -85,10 +83,10 @@ def main(bids_dir, output_dir, project, dl_weights, denoise, participant_label, 
     # 1. Setup Data
     if dl_weights:
         print("Downloading templates and weights...")
-        antspyt1w.get_data(force_download=False)
-        antspymm.get_data(force_download=False)
+        antspyt1w.get_data(force_download=True)
+        antspymm.get_data(force_download=True)
 
-    run_study(bids_dir, output_dir, project, denoise, participant_label, session_label, separator)
+    run_study(bids_dir, output_dir, project, denoise, participant_label, session_label, separator, t1_run)
 
 if __name__ == '__main__': # pragma: no cover
-    main()
+    main()    

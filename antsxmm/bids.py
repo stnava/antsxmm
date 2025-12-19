@@ -17,17 +17,13 @@ def parse_antsxbids_layout(bids_root):
     sessions_data = []
 
     for sub_dir in subjects:
-        # CHANGED: Use the full folder name as the ID (e.g. 'sub-211239')
         sub_id = sub_dir.name
         
-        # Find sessions
         sessions = sorted([d for d in sub_dir.glob("ses*") if d.is_dir()])
         
         for ses_dir in sessions:
-            # CHANGED: Use the full folder name as the ID (e.g. 'ses-20230405')
             ses_id = ses_dir.name
             
-            # Initialize dict for this session
             data = {
                 'subjectID': sub_id,
                 'date': ses_id, 
@@ -36,14 +32,15 @@ def parse_antsxbids_layout(bids_root):
 
             # 1. Anatomy (T1w, FLAIR)
             anat_dir = ses_dir / 'anat'
+            t1_files = []
             if anat_dir.exists():
-                t1s = sorted(list(anat_dir.glob("*T1w.nii.gz")))
+                t1_files = sorted([str(p) for p in anat_dir.glob("*T1w.nii.gz")])
                 flairs = sorted(list(anat_dir.glob("*FLAIR.nii.gz")))
                 
-                if t1s:
-                    data['t1_filename'] = str(t1s[0])
                 if flairs:
                     data['flair_filename'] = str(flairs[0])
+            
+            data['t1_filenames'] = t1_files # LIST of T1s
 
             # 2. DWI
             dwi_dir = ses_dir / 'dwi'
@@ -66,24 +63,22 @@ def parse_antsxbids_layout(bids_root):
                 nm_files = sorted([str(p) for p in nm_dir.glob("*NM.nii.gz")])
             data['nm_filenames'] = nm_files
 
-            # 5. Perfusion (ASL) - Placeholder logic, assuming 'perf' folder
+            # 5. Perfusion
             perf_dir = ses_dir / 'perf'
             if perf_dir.exists():
-                # Grab the first available ASL file
                 perfs = sorted(list(perf_dir.glob("*.nii.gz")))
                 if perfs:
                     data['perf_filename'] = str(perfs[0])
 
-            # 6. PET (pet3d) - Placeholder logic, assuming 'pet' folder
+            # 6. PET
             pet_dir = ses_dir / 'pet'
             if pet_dir.exists():
-                # Grab the first available PET file
                 pets = sorted(list(pet_dir.glob("*.nii.gz")))
                 if pets:
                     data['pet3d_filename'] = str(pets[0])
 
-            # Only add if we have a T1
-            if 't1_filename' in data:
+            # Only add if we have at least one T1
+            if data['t1_filenames']:
                 sessions_data.append(data)
 
     return pd.DataFrame(sessions_data)

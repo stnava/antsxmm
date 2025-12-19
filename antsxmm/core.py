@@ -330,7 +330,7 @@ def build_wide_table_from_mmwide(root_dir, pattern="**/*_mmwide.csv", sep="_", v
 
 def process_session(session_data, output_root, project_id="ANTsX",
                     denoise_dti=True, dti_moco='SyN', separator='_', verbose=True,
-                    build_wide_table=True):
+                    build_wide_table=True, t1_run_match=None):
     """
     Runs the full ANTsPyMM pipeline on one session.
     """
@@ -344,11 +344,31 @@ def process_session(session_data, output_root, project_id="ANTsX",
     sub_id = session_data['subjectID']
     date_id = session_data['date']
 
-    # 2. Extract run ID (image_uid)
-    t1_fn = session_data['t1_filename']
+    # 2. Select T1 file
+    # session_data['t1_filenames'] is a list
+    all_t1s = session_data.get('t1_filenames', [])
+    if not all_t1s:
+        # Fallback for old dataframe format?
+        if 't1_filename' in session_data:
+             t1_fn = session_data['t1_filename']
+        else:
+             print(f"Error: No T1w found for {sub_id}")
+             return result
+    else:
+        # Select logic
+        t1_fn = all_t1s[0] # Default
+        if t1_run_match:
+            # Look for exact string match in basename
+            matches = [f for f in all_t1s if t1_run_match in os.path.basename(f)]
+            if matches:
+                t1_fn = matches[0]
+                if verbose: print(f"Selected T1 matching '{t1_run_match}': {os.path.basename(t1_fn)}")
+            else:
+                if verbose: print(f"Warning: No T1 matched '{t1_run_match}'. Using default: {os.path.basename(t1_fn)}")
+
     image_uid = extract_image_id(t1_fn)
 
-    # 3. Setup Staging Area (Root of our temp NRG structure)
+    # 3. Setup Staging Area
     staging_root = os.path.join(tempfile.gettempdir(), f"antsxmm_staging_{sub_id}_{date_id}")
     if os.path.exists(staging_root):
         shutil.rmtree(staging_root)
@@ -360,10 +380,10 @@ def process_session(session_data, output_root, project_id="ANTsX",
 
     # FLAIR
     flair_raw = session_data.get('flair_filename', None)
-    flair_path, _, _ = sanitize_and_stage_file(flair_raw, project_id, sub_id, date_id, "T2Flair", image_uid, separator, staging_root, verbose)
+    flair_path, _ = sanitize_and_stage_file(flair_raw, project_id, sub_id, date_id, "T2Flair", image_uid, separator, staging_root, verbose)
     flair_info = (flair_path, _)
 
-    # rsfMRI (Handle List & Variants)
+    # rsfMRI
     rsf_raw = session_data.get('rsf_filenames', [])
     rsf_infos = []
     rsf_paths = []
@@ -373,7 +393,7 @@ def process_session(session_data, output_root, project_id="ANTsX",
             rsf_infos.append((path, mod, folder_id))
             rsf_paths.append(path)
 
-    # DTI (Handle List & Variants)
+    # DTI
     dti_raw = session_data.get('dti_filenames', [])
     dti_infos = []
     dti_paths = []
@@ -383,7 +403,7 @@ def process_session(session_data, output_root, project_id="ANTsX",
             dti_infos.append((path, mod, folder_id))
             dti_paths.append(path)
 
-    # NM (Keep original 'rXXXX' IDs, NM logic handles string IDs)
+    # NM
     nm_raw = session_data.get('nm_filenames', [])
     nm_infos = []
     nm_paths = []
@@ -397,12 +417,12 @@ def process_session(session_data, output_root, project_id="ANTsX",
 
     # Perf
     perf_raw = session_data.get('perf_filename', None)
-    perf_path, _, _ = sanitize_and_stage_file(perf_raw, project_id, sub_id, date_id, "perf", image_uid, separator, staging_root, verbose)
+    perf_path, _ = sanitize_and_stage_file(perf_raw, project_id, sub_id, date_id, "perf", image_uid, separator, staging_root, verbose)
     perf_info = (perf_path, _)
 
     # PET
     pet_raw = session_data.get('pet3d_filename', None)
-    pet_path, _, _ = sanitize_and_stage_file(pet_raw, project_id, sub_id, date_id, "pet3d", image_uid, separator, staging_root, verbose)
+    pet_path, _ = sanitize_and_stage_file(pet_raw, project_id, sub_id, date_id, "pet3d", image_uid, separator, staging_root, verbose)
     pet_info = (pet_path, _)
 
     mock_source_dir = staging_root
@@ -436,15 +456,16 @@ def process_session(session_data, output_root, project_id="ANTsX",
             pet3d_filename=pet_path
         )
         
-        # Override IDs for single-file modalities to ensure alignment
         if 'flairid' in study_csv.columns and flair_path: 
             study_csv['flairid'] = image_uid
         
-        # For multi-file modalities (rsfMRI, DTI), we do NOT override IDs.
-        # generate_mm_dataframe maps the input list of file paths to columns rsfid1, rsfid2...
-        # These columns hold the FULL PATH to the file.
-        # antspymm's docsamson uses these columns to check file existence.
-        # Since we passed valid staged paths, they will exist and processing will proceed.
+        if rsf_infos:
+            if 'rsfid1' in study_csv.columns: study_csv['rsfid1'] = rsf_infos[0][2]
+            if 'rsfid2' in study_csv.columns and len(rsf_infos) > 1: study_csv['rsfid2'] = rsf_infos[1][2]
+            
+        if dti_infos:
+            if 'dtid1' in study_csv.columns: study_csv['dtid1'] = dti_infos[0][2]
+            if 'dtid2' in study_csv.columns and len(dti_infos) > 1: study_csv['dtid2'] = dti_infos[1][2]
 
         if perf_path and 'perfid' in study_csv.columns: 
             study_csv['perfid'] = image_uid
