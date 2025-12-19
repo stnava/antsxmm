@@ -40,7 +40,7 @@ def parse_antsxbids_layout(bids_root):
                 if flairs:
                     data['flair_filename'] = str(flairs[0])
             
-            data['t1_filenames'] = t1_files # LIST of T1s
+            data['t1_filenames'] = t1_files # Store ALL T1s
 
             # 2. DWI
             dwi_dir = ses_dir / 'dwi'

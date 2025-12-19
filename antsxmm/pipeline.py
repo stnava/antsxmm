@@ -89,4 +89,4 @@ def main(bids_dir, output_dir, project, dl_weights, denoise, participant_label, 
     run_study(bids_dir, output_dir, project, denoise, participant_label, session_label, separator, t1_run)
 
 if __name__ == '__main__': # pragma: no cover
-    main()    
+    main()

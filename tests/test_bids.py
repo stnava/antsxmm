@@ -5,9 +5,16 @@ def test_parse_bids_valid(mock_bids_structure):
     df = parse_antsxbids_layout(mock_bids_structure)
     assert len(df) == 1
     row = df.iloc[0]
-    assert "T1w.nii.gz" in row['t1_filename']
-    # Check that it picked up the uppercase FLAIR
-    assert "FLAIR.nii.gz" in row['flair_filename']
+    
+    # Check that t1_filenames contains BOTH runs
+    t1_list = row['t1_filenames']
+    assert len(t1_list) == 2
+    assert "r0001" in t1_list[0]
+    assert "r0002" in t1_list[1]
+    
+    # We no longer expect a scalar 't1_filename' in the dataframe at this stage
+    # It is derived in process_session
+    assert 't1_filename' not in row or pd.isna(row['t1_filename'])
 
 def test_parse_bids_no_dir():
     with pytest.raises(FileNotFoundError):

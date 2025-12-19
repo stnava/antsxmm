@@ -48,16 +48,21 @@ def get_modality_variant(filename, base_modality, sep):
 def sanitize_and_stage_file(filepath, project, subject, date, base_modality, image_id, sep, staging_root, verbose=False):
     """
     Stages a file into a strict NRG directory structure in tmp.
+    
+    Filename Format: {Project}{sep}{Sub}{sep}{Date}{sep}{Modality}{sep}{ID}.nii.gz
+    
+    Returns:
+        symlink_path, modality_variant, unique_id
     """
     if not filepath:
         return None, None, None
 
-    modality = get_modality_variant(filepath, base_modality, sep)
+    modality_variant = get_modality_variant(filepath, base_modality, sep)
     
     # Clean modality string for filename construction if separator matches
-    filename_modality = modality
-    if sep in modality:
-        filename_modality = modality.replace(sep, "")
+    filename_modality = modality_variant
+    if sep in modality_variant:
+        filename_modality = modality_variant.replace(sep, "")
 
     # Ensure extension is handled
     name = os.path.basename(filepath)
@@ -69,10 +74,11 @@ def sanitize_and_stage_file(filepath, project, subject, date, base_modality, ima
         ext = os.path.splitext(name)[1]
 
     # FORCE NRG FILENAME
+    # {Project}{sep}{Subject}{sep}{Date}{sep}{Modality}{sep}{ID}.nii.gz
     new_filename = f"{project}{sep}{subject}{sep}{date}{sep}{filename_modality}{sep}{image_id}{ext}"
     
     # Construct NRG path
-    dest_dir = os.path.join(staging_root, project, subject, date, modality, image_id)
+    dest_dir = os.path.join(staging_root, project, subject, date, modality_variant, image_id)
     os.makedirs(dest_dir, exist_ok=True)
     
     symlink_path = os.path.join(dest_dir, new_filename)
@@ -83,7 +89,7 @@ def sanitize_and_stage_file(filepath, project, subject, date, base_modality, ima
     os.symlink(os.path.abspath(filepath), symlink_path)
     
     if verbose:
-        print(f"  Staged: {name} -> .../{modality}/{image_id}/{new_filename}")
+        print(f"  Staged: {name} -> .../{modality_variant}/{image_id}/{new_filename}")
         
     # Stage sidecars (bval, bvec, json)
     new_filename_base = f"{project}{sep}{subject}{sep}{date}{sep}{filename_modality}{sep}{image_id}"
@@ -108,7 +114,7 @@ def sanitize_and_stage_file(filepath, project, subject, date, base_modality, ima
             if verbose:
                 print(f"    + Sidecar: {orig_base}{side_ext} -> {new_filename_base}{side_ext}")
 
-    return symlink_path, modality, image_id
+    return symlink_path, modality_variant, image_id
 
 def print_expected_tree(output_root, project_id, sub_id, date_id, image_uid, 
                         flair_info, rsf_infos, dti_infos, nm_infos, perf_info, pet_info, sep="_"):
@@ -126,7 +132,7 @@ def print_expected_tree(output_root, project_id, sub_id, date_id, image_uid,
 
     # FLAIR
     if flair_info[0]:
-        print(f"├── T2Flair/ (ID: {image_uid}) [FOUND]")
+        print(f"├── T2Flair/ (ID: {flair_info[2]}) [FOUND]")
     else:
         print(f"├── T2Flair/ [MISSING] (Skipping)")
 
@@ -148,27 +154,24 @@ def print_expected_tree(output_root, project_id, sub_id, date_id, image_uid,
 
     # Neuromelanin
     if nm_infos:
-        nm_id = nm_infos[0][2] # Using extracted ID from tuple
+        nm_id = nm_infos[0][2] 
         print(f"└── NM2DMT/ (ID: {nm_id}...) [FOUND: {len(nm_infos)} scan(s)]")
     else:
         print(f"└── NM2DMT/ [MISSING] (Skipping)")
 
     # Perfusion
     if perf_info[0]:
-        print(f"├── perf/ (ID: {image_uid}) [FOUND]")
+        print(f"├── perf/ (ID: {perf_info[2]}) [FOUND]")
     else:
         print(f"├── perf/ [MISSING] (Skipping)")
 
     # PET
     if pet_info[0]:
-        print(f"├── pet3d/ (ID: {image_uid}) [FOUND]")
+        print(f"├── pet3d/ (ID: {pet_info[2]}) [FOUND]")
     else:
         print(f"├── pet3d/ [MISSING] (Skipping)")
 
     print("\n")
-
-# ... (bind_mm_rows, check_modality_order, build_wide_table_from_mmwide remain unchanged) ...
-# Placeholder for brevity, assuming existing functions are kept.
 
 def bind_mm_rows(named_dataframes, sep="_"):
     if not named_dataframes:
@@ -344,25 +347,21 @@ def process_session(session_data, output_root, project_id="ANTsX",
     sub_id = session_data['subjectID']
     date_id = session_data['date']
 
-    # 2. Select T1 file
-    # session_data['t1_filenames'] is a list
+    # 2. Select T1 based on run_match if provided
     all_t1s = session_data.get('t1_filenames', [])
     if not all_t1s:
-        # Fallback for old dataframe format?
         if 't1_filename' in session_data:
              t1_fn = session_data['t1_filename']
         else:
              print(f"Error: No T1w found for {sub_id}")
              return result
     else:
-        # Select logic
         t1_fn = all_t1s[0] # Default
         if t1_run_match:
-            # Look for exact string match in basename
             matches = [f for f in all_t1s if t1_run_match in os.path.basename(f)]
             if matches:
                 t1_fn = matches[0]
-                if verbose: print(f"Selected T1 matching '{t1_run_match}': {os.path.basename(t1_fn)}")
+                if verbose: print(f"Selected T1 match: {os.path.basename(t1_fn)}")
             else:
                 if verbose: print(f"Warning: No T1 matched '{t1_run_match}'. Using default: {os.path.basename(t1_fn)}")
 
@@ -374,56 +373,75 @@ def process_session(session_data, output_root, project_id="ANTsX",
         shutil.rmtree(staging_root)
     os.makedirs(staging_root, exist_ok=True)
 
+    # Helper to filter other files if run match is active
+    def filter_by_run(file_list):
+        if not t1_run_match: return file_list
+        return [f for f in file_list if t1_run_match in os.path.basename(f)]
+
     # 4. Stage Files
     # T1w
     t1_path, _, _ = sanitize_and_stage_file(t1_fn, project_id, sub_id, date_id, "T1w", image_uid, separator, staging_root, verbose)
 
-    # FLAIR
+    # FLAIR (ID = r0001)
     flair_raw = session_data.get('flair_filename', None)
-    flair_path, _ = sanitize_and_stage_file(flair_raw, project_id, sub_id, date_id, "T2Flair", image_uid, separator, staging_root, verbose)
-    flair_info = (flair_path, _)
+    # If using run match, verify flair matches too? Optional, but safer to just use available.
+    # Often FLAIR is just one per session.
+    flair_path, flair_mod, flair_id = sanitize_and_stage_file(flair_raw, project_id, sub_id, date_id, "T2Flair", image_uid, separator, staging_root, verbose)
+    flair_info = (flair_path, flair_mod, flair_id)
 
     # rsfMRI
     rsf_raw = session_data.get('rsf_filenames', [])
+    rsf_raw = filter_by_run(rsf_raw) # Filter if requested
     rsf_infos = []
     rsf_paths = []
     for f in rsf_raw:
-        path, mod, folder_id = sanitize_and_stage_file(f, project_id, sub_id, date_id, "rsfMRI", image_uid, separator, staging_root, verbose)
+        # Use file's own ID to allow multiple runs (e.g. r0001_LR, r0002_LR)
+        # unless we want to force them to match T1.
+        # But if we filtered by T1 run ID, they should match.
+        this_id = extract_image_id(f)
+        if this_id == "000": this_id = image_uid
+        
+        path, mod, unique_id = sanitize_and_stage_file(f, project_id, sub_id, date_id, "rsfMRI", this_id, separator, staging_root, verbose)
         if path:
-            rsf_infos.append((path, mod, folder_id))
+            rsf_infos.append((path, mod, unique_id))
             rsf_paths.append(path)
 
     # DTI
     dti_raw = session_data.get('dti_filenames', [])
+    dti_raw = filter_by_run(dti_raw)
     dti_infos = []
     dti_paths = []
     for f in dti_raw:
-        path, mod, folder_id = sanitize_and_stage_file(f, project_id, sub_id, date_id, "DTI", image_uid, separator, staging_root, verbose)
+        this_id = extract_image_id(f)
+        if this_id == "000": this_id = image_uid
+        path, mod, unique_id = sanitize_and_stage_file(f, project_id, sub_id, date_id, "DTI", this_id, separator, staging_root, verbose)
         if path:
-            dti_infos.append((path, mod, folder_id))
+            dti_infos.append((path, mod, unique_id))
             dti_paths.append(path)
 
-    # NM
+    # NM (Usually keep all runs for averaging)
     nm_raw = session_data.get('nm_filenames', [])
+    # NM doesn't typically follow standard T1 run numbering (r0001..r0005 vs r0001)
+    # So we don't filter NM usually.
     nm_infos = []
     nm_paths = []
     for f in nm_raw:
         rid = extract_image_id(f)
         if rid == "000": rid = image_uid
-        path, mod, folder_id = sanitize_and_stage_file(f, project_id, sub_id, date_id, "NM2DMT", rid, separator, staging_root, verbose)
+        path, mod, unique_id = sanitize_and_stage_file(f, project_id, sub_id, date_id, "NM2DMT", rid, separator, staging_root, verbose=verbose)
         if path:
-            nm_infos.append((path, mod, folder_id))
+            nm_infos.append((path, mod, unique_id))
             nm_paths.append(path)
 
     # Perf
     perf_raw = session_data.get('perf_filename', None)
-    perf_path, _ = sanitize_and_stage_file(perf_raw, project_id, sub_id, date_id, "perf", image_uid, separator, staging_root, verbose)
-    perf_info = (perf_path, _)
+    perf_path, perf_mod, perf_id = sanitize_and_stage_file(perf_raw, project_id, sub_id, date_id, "perf", image_uid, separator, staging_root, verbose)
+    perf_info = (perf_path, perf_mod, perf_id)
 
     # PET
     pet_raw = session_data.get('pet3d_filename', None)
-    pet_path, _ = sanitize_and_stage_file(pet_raw, project_id, sub_id, date_id, "pet3d", image_uid, separator, staging_root, verbose)
-    pet_info = (pet_path, _)
+    pet_path, pet_mod, pet_id = sanitize_and_stage_file(pet_raw, project_id, sub_id, date_id, "pet3d", image_uid, separator, staging_root, verbose)
+    pet_info = (pet_path, pet_mod, pet_id)
 
     mock_source_dir = staging_root
 
@@ -456,9 +474,11 @@ def process_session(session_data, output_root, project_id="ANTsX",
             pet3d_filename=pet_path
         )
         
+        # Override IDs for single-file modalities to ensure alignment
         if 'flairid' in study_csv.columns and flair_path: 
             study_csv['flairid'] = image_uid
         
+        # Override IDs for DTI/RSF
         if rsf_infos:
             if 'rsfid1' in study_csv.columns: study_csv['rsfid1'] = rsf_infos[0][2]
             if 'rsfid2' in study_csv.columns and len(rsf_infos) > 1: study_csv['rsfid2'] = rsf_infos[1][2]

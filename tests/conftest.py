@@ -11,19 +11,24 @@ def mock_bids_structure(tmp_path):
     sub1 = bids_root / "sub-001"
     ses1 = sub1 / "ses-20230101"
     
+    # Anat: Create TWO runs for T1w
     (ses1 / "anat").mkdir(parents=True)
-    (ses1 / "anat" / "sub-001_ses-20230101_r001_T1w.nii.gz").touch()
-    # Note: Uppercase FLAIR to test sanitization
-    (ses1 / "anat" / "sub-001_ses-20230101_r001_FLAIR.nii.gz").touch()
+    (ses1 / "anat" / "sub-001_ses-20230101_r0001_T1w.nii.gz").touch()
+    (ses1 / "anat" / "sub-001_ses-20230101_r0002_T1w.nii.gz").touch() # Second run
     
+    # FLAIR
+    (ses1 / "anat" / "sub-001_ses-20230101_r0001_FLAIR.nii.gz").touch()
+    
+    # DWI
     (ses1 / "dwi").mkdir()
     (ses1 / "dwi" / "sub-001_ses-20230101_dir-LR_dwi.nii.gz").touch()
     (ses1 / "dwi" / "sub-001_ses-20230101_dir-RL_dwi.nii.gz").touch()
     
+    # Func
     (ses1 / "func").mkdir()
-    # Note: 'bold' not 'func' to test sanitization
     (ses1 / "func" / "sub-001_ses-20230101_task-rest_bold.nii.gz").touch()
     
+    # Melanin
     (ses1 / "melanin").mkdir()
     (ses1 / "melanin" / "sub-001_ses-20230101_NM.nii.gz").touch()
 
@@ -31,11 +36,16 @@ def mock_bids_structure(tmp_path):
 
 @pytest.fixture
 def mock_session_data(mock_bids_structure):
+    # Mimic the structure returned by parse_antsxbids_layout
+    t1_r1 = str(mock_bids_structure / "sub-001/ses-20230101/anat/sub-001_ses-20230101_r0001_T1w.nii.gz")
+    t1_r2 = str(mock_bids_structure / "sub-001/ses-20230101/anat/sub-001_ses-20230101_r0002_T1w.nii.gz")
+    
     return {
         'subjectID': '001',
         'date': '20230101',
-        't1_filename': str(mock_bids_structure / "sub-001/ses-20230101/anat/sub-001_ses-20230101_r001_T1w.nii.gz"),
-        'flair_filename': str(mock_bids_structure / "sub-001/ses-20230101/anat/sub-001_ses-20230101_r001_FLAIR.nii.gz"),
+        't1_filename': t1_r1, # Default first
+        't1_filenames': [t1_r1, t1_r2], # List of all
+        'flair_filename': str(mock_bids_structure / "sub-001/ses-20230101/anat/sub-001_ses-20230101_r0001_FLAIR.nii.gz"),
         'rsf_filenames': [str(mock_bids_structure / "sub-001/ses-20230101/func/sub-001_ses-20230101_task-rest_bold.nii.gz")],
         'dti_filenames': [
             str(mock_bids_structure / "sub-001/ses-20230101/dwi/sub-001_ses-20230101_dir-LR_dwi.nii.gz"),
