@@ -470,25 +470,6 @@ def process_session(session_data, output_root, project_id="ANTsX",
             pet3d_filename=pet_path
         )
         
-        # Override IDs for single-file modalities to ensure alignment
-        if 'flairid' in study_csv.columns and flair_path: 
-            study_csv['flairid'] = image_uid
-        
-        # Align IDs for DTI/RSF
-        # We explicitly use the ID from the staged file to preserve multi-run information
-        if rsf_infos:
-            if 'rsfid1' in study_csv.columns: study_csv['rsfid1'] = rsf_infos[0][2]
-            if 'rsfid2' in study_csv.columns and len(rsf_infos) > 1: study_csv['rsfid2'] = rsf_infos[1][2]
-            
-        if dti_infos:
-            if 'dtid1' in study_csv.columns: study_csv['dtid1'] = dti_infos[0][2]
-            if 'dtid2' in study_csv.columns and len(dti_infos) > 1: study_csv['dtid2'] = dti_infos[1][2]
-
-        if perf_path and 'perfid' in study_csv.columns: 
-            study_csv['perfid'] = image_uid
-        if pet_path and 'pet3did' in study_csv.columns: 
-            study_csv['pet3did'] = image_uid
-
         study_csv_clean = study_csv.dropna(axis=1)
 
         try:

@@ -139,18 +139,6 @@ def test_process_session_t1_filter_and_dwi_persistence(mock_multi_run_data, tmp_
         dti_passed = kwargs['dti_filenames']
         assert len(dti_passed) == 2
         
-        # ASSERT 4: Check ID overwrite logic in dataframe
-        # The logic in process_session writes back the staged IDs to the dataframe
-        # verifying that we didn't lose the 'r001' ID for the first DTI
-        
-        # We inspect the args passed to mm_csv (which receives the modified dataframe)
-        mock_mm_csv = antspymm.mm_csv
-        call_args = mock_mm_csv.call_args[0]
-        final_df = call_args[0]
-        
-        assert final_df['dtid1'].iloc[0] == "r001"
-        assert final_df['dtid2'].iloc[0] == "r002"
-
 # -----------------------------------------------------------------------------
 # 3. Wide Table & Helpers
 # -----------------------------------------------------------------------------
