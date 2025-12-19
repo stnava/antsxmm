@@ -33,9 +33,9 @@ def get_modality_variant(filename, base_modality, sep):
         
     if suffix:
         if sep == "_":
-            return f"{base_modality}{suffix}"
+            return "{}{}".format(base_modality, suffix)
         else:
-            return f"{base_modality}{sep}{suffix}"
+            return "{}{}{}".format(base_modality, sep, suffix)
     
     # Default mappings
     if base_modality == "dwi": return "DTI"
@@ -67,7 +67,10 @@ def sanitize_and_stage_file(filepath, project, subject, date, base_modality, ima
         ext = os.path.splitext(name)[1]
 
     # FORCE NRG FILENAME
-    new_filename = f"{project}{sep}{subject}{sep}{date}{sep}{filename_modality}{sep}{image_id}{ext}"
+    safe_sub = subject if subject else "sub"
+    safe_date = date if date else "ses"
+    
+    new_filename = "{}_{}_{}_{}{}".format(safe_sub, safe_date, filename_modality, image_id, ext)
     
     # Construct NRG path
     dest_dir = os.path.join(staging_root, project, subject, date, modality, image_id)
@@ -81,10 +84,10 @@ def sanitize_and_stage_file(filepath, project, subject, date, base_modality, ima
     os.symlink(os.path.abspath(filepath), symlink_path)
     
     if verbose:
-        print(f"  Staged: {name} -> .../{modality}/{image_id}/{new_filename}")
+        print(" Staged: {} -> {}/{}/{}".format(name, modality, image_id, new_filename))
         
     # Stage sidecars (bval, bvec, json)
-    new_filename_base = f"{project}{sep}{subject}{sep}{date}{sep}{filename_modality}{sep}{image_id}"
+    new_filename_base = new_filename.replace(ext, "")
     
     if name.endswith(".nii.gz"):
         orig_base = name[:-7]
@@ -104,7 +107,7 @@ def sanitize_and_stage_file(filepath, project, subject, date, base_modality, ima
                 os.remove(dst_side)
             os.symlink(os.path.abspath(src_side), dst_side)
             if verbose:
-                print(f"    + Sidecar: {orig_base}{side_ext} -> {new_filename_base}{side_ext}")
+                print("   + Sidecar: {} -> {}".format(side_ext, os.path.basename(dst_side)))
 
     return symlink_path, modality, image_id
 
@@ -115,53 +118,53 @@ def print_expected_tree(output_root, project_id, sub_id, date_id, image_uid,
     """
     base = Path(output_root) / project_id / sub_id / date_id
     
-    print(f"\n[PRE-CHECK] Processing Plan for {sub_id} {date_id}:")
-    print(f"ROOT OUTPUT: {base}")
+    print("\n[PRE-CHECK] Processing Plan for {} : {}".format(sub_id, date_id))
+    print("ROOT OUTPUT: {}".format(base))
     
     # T1 Hierarchy
-    print(f"├── T1wHierarchical/ (ID: {image_uid}) [FOUND]")
-    print(f"│   └── .../{project_id}{sep}{sub_id}{sep}{date_id}{sep}T1wHierarchical{sep}{image_uid}{sep}...")
+    print("├── T1wHierarchical/ (ID: {}) [FOUND]".format(image_uid))
+    # FIXED: Corrected format string
+    print("│   └── .../T1wHierarchical{}{}".format(sep, image_uid))
 
     # FLAIR
     if flair_info[0]:
-        print(f"├── T2Flair/ (ID: {flair_info[2]}) [FOUND]")
+        print("├── T2Flair/ (ID: {}) [FOUND]".format(flair_info[2]))
     else:
-        print(f"├── T2Flair/ [MISSING] (Skipping)")
+        print("├── T2Flair/ [MISSING] (Skipping)")
 
     # rsfMRI
     if rsf_infos:
-        print(f"├── rsfMRI/ [FOUND: {len(rsf_infos)} scan(s)]")
+        print("├── rsfMRI/ [FOUND: {} scan(s)]".format(len(rsf_infos)))
         for p, m, fid in rsf_infos:
-            print(f"│   └── Variant: {m} (ID: {fid}) -> {os.path.basename(p)}")
+            print("│   └── Variant: {} (ID: {}) -> {}".format(m, fid, os.path.basename(p)))
     else:
-        print(f"├── rsfMRI/ [MISSING] (Skipping)")
+        print("├── rsfMRI/ [MISSING] (Skipping)")
 
     # DTI
     if dti_infos:
-        print(f"├── DTI/ [FOUND: {len(dti_infos)} scan(s)]")
+        print("├── DTI/ [FOUND: {} scan(s)]".format(len(dti_infos)))
         for p, m, fid in dti_infos:
-            print(f"│   └── Variant: {m} (ID: {fid}) -> {os.path.basename(p)}")
+            print("│   └── Variant: {} (ID: {}) -> {}".format(m, fid, os.path.basename(p)))
     else:
-        print(f"├── DTI/ [MISSING] (Skipping)")
+        print("├── DTI/ [MISSING] (Skipping)")
 
     # Neuromelanin
     if nm_infos:
-        nm_id = nm_infos[0][2] 
-        print(f"└── NM2DMT/ (ID: {nm_id}...) [FOUND: {len(nm_infos)} scan(s)]")
+        print("└── NM2DMT/ (ID: ...) [FOUND: {} scan(s)]".format(len(nm_infos)))
     else:
-        print(f"└── NM2DMT/ [MISSING] (Skipping)")
+        print("└── NM2DMT/ [MISSING] (Skipping)")
 
     # Perfusion
     if perf_info[0]:
-        print(f"├── perf/ (ID: {perf_info[2]}) [FOUND]")
+        print("├── perf/ (ID: {}) [FOUND]".format(perf_info[2]))
     else:
-        print(f"├── perf/ [MISSING] (Skipping)")
+        print("├── perf/ [MISSING] (Skipping)")
 
     # PET
     if pet_info[0]:
-        print(f"├── pet3d/ (ID: {pet_info[2]}) [FOUND]")
+        print("├── pet3d/ (ID: {}) [FOUND]".format(pet_info[2]))
     else:
-        print(f"├── pet3d/ [MISSING] (Skipping)")
+        print("├── pet3d/ [MISSING] (Skipping)")
 
     print("\n")
 
@@ -190,7 +193,6 @@ def bind_mm_rows(named_dataframes, sep="_"):
     combined = combined.loc[:, ~combined.columns.duplicated(keep="first")]
     combined = combined.reindex(sorted(combined.columns), axis=1)
 
-    # FIX: Robustly rename the index column to 'subject_id'
     combined = combined.reset_index()
     cols = list(combined.columns)
     cols[0] = "subject_id"
@@ -204,7 +206,7 @@ def check_modality_order(ordered_data, expected_order):
     filtered_expected = [mod for mod in expected_order if mod in actual_mods]
 
     if actual_mods != filtered_expected:
-        print(f"Warning: Modality order mismatch. Expected: {filtered_expected}, Got: {actual_mods}")
+        print("Warning: Modality order mismatch. Expected: {}, Got: {}".format(filtered_expected, actual_mods))
     return True
 
 
@@ -213,23 +215,26 @@ def build_wide_table_from_mmwide(root_dir, pattern="**/*_mmwide.csv", sep="_", v
     csv_files = sorted(root.rglob(pattern))
 
     if verbose:
-        print(f"\nFound {len(csv_files)} *_mmwide.csv files")
+        print("\nFound {} *_mmwide.csv files".format(len(csv_files)))
         for f in csv_files:
-            print(" ->", f.relative_to(root))
+            try:
+                print(" -> {}".format(f.relative_to(root)))
+            except ValueError:
+                print(" -> {}".format(f))
 
     MODALITY_MAP = {
         "T1wHierarchical": "T1Hier",
-        "T1Hier":     "T1Hier",
-        "T1w":        "T1w",
-        "NM2DMT":     "NM2DMT",
-        "NM":         "NM2DMT",
-        "DTI":        "DTI",
-        "rsfMRI":     "rsfMRI",
-        "T2Flair":    "T2Flair",
-        "FLAIR":      "T2Flair",
-        "perf":       "perf",
-        "pet3d":      "pet3d",
-        "PET":        "pet3d",
+        "T1Hier":  "T1Hier",
+        "T1w":    "T1w",
+        "NM2DMT":  "NM2DMT",
+        "NM":    "NM2DMT",
+        "DTI":    "DTI",
+        "rsfMRI":  "rsfMRI",
+        "T2Flair":  "T2Flair",
+        "FLAIR":   "T2Flair",
+        "perf":   "perf",
+        "pet3d":   "pet3d",
+        "PET":    "pet3d",
     }
 
     MODALITY_ORDER = ["T1Hier", "T1w", "DTI", "rsfMRI", "T2Flair", "NM2DMT", "perf", "pet3d"]
@@ -239,7 +244,10 @@ def build_wide_table_from_mmwide(root_dir, pattern="**/*_mmwide.csv", sep="_", v
     for csv_path in csv_files:
         sub = next((p for p in csv_path.parts if p.startswith("sub-")), None)
         ses = next((p for p in csv_path.parts if p.startswith("ses-")), None)
-        subject_key = f"{sub}_{ses}" if sub and ses else "UNKNOWN"
+        if sub and ses:
+            subject_key = "{}_{}".format(sub, ses)
+        else:
+            subject_key = "UNKNOWN"
 
         matched_prefix = None
         best_len = 0
@@ -251,11 +259,11 @@ def build_wide_table_from_mmwide(root_dir, pattern="**/*_mmwide.csv", sep="_", v
 
         if not matched_prefix:
             if verbose:
-                print(f" SKIP: unknown modality for file {csv_path.name}")
+                print(" SKIP: unknown modality for file {}".format(csv_path.name))
             continue
 
         if verbose:
-            print(f"\nProcessing: {matched_prefix.ljust(10)} | {csv_path.name}")
+            print("\nProcessing: {} | {}".format(matched_prefix.ljust(10), csv_path.name))
 
         df = pd.read_csv(csv_path)
 
@@ -263,13 +271,17 @@ def build_wide_table_from_mmwide(root_dir, pattern="**/*_mmwide.csv", sep="_", v
         if drop_cols:
             df = df.drop(columns=drop_cols)
             if verbose:
-                print(f" Dropped columns: {drop_cols}")
+                print(" Dropped columns: {}".format(drop_cols))
 
         if len(df) > 1:
             if verbose:
-                print(f" Collapsing {len(df)} rows to last")
+                print(" Collapsing {} rows to last".format(len(df)))
             df = df.iloc[[-1]].copy()
-
+        
+        # FIXED: Handle duplicate columns if CSV already has bids_subject
+        if "bids_subject" in df.columns:
+            df = df.drop(columns=["bids_subject"])
+            
         df.insert(0, "bids_subject", subject_key)
 
         raw_data.append((matched_prefix, df))
@@ -304,7 +316,7 @@ def build_wide_table_from_mmwide(root_dir, pattern="**/*_mmwide.csv", sep="_", v
         if mod != "T1Hier" and t1hier_raw_cols:
             overlap = t1hier_raw_cols & set(df.columns)
             if overlap and verbose:
-                print(f" Excluding {len(overlap)} overlapping columns from {mod}")
+                print(" Excluding {} overlapping columns from {}".format(len(overlap), mod))
             df = df.drop(columns=overlap, errors='ignore')
         processed_data.append((mod, df))
 
@@ -330,8 +342,8 @@ def build_wide_table_from_mmwide(root_dir, pattern="**/*_mmwide.csv", sep="_", v
 
 
 def process_session(session_data, output_root, project_id="ANTsX",
-                    denoise_dti=True, dti_moco='SyN', separator='_', verbose=True,
-                    build_wide_table=True, t1_run_match=None):
+          denoise_dti=True, dti_moco='SyN', separator='_', verbose=True,
+          build_wide_table=True, t1_run_match=None):
     """
     Runs the full ANTsPyMM pipeline on one session.
     """
@@ -349,24 +361,24 @@ def process_session(session_data, output_root, project_id="ANTsX",
     all_t1s = session_data.get('t1_filenames', [])
     if not all_t1s:
         if 't1_filename' in session_data:
-             t1_fn = session_data['t1_filename']
+            t1_fn = session_data['t1_filename']
         else:
-             print(f"Error: No T1w found for {sub_id}")
-             return result
+            print("Error: No T1w found for {} {}".format(sub_id, date_id))
+            return result
     else:
         t1_fn = all_t1s[0] # Default
         if t1_run_match:
             matches = [f for f in all_t1s if t1_run_match in os.path.basename(f)]
             if matches:
                 t1_fn = matches[0]
-                if verbose: print(f"Selected T1 match: {os.path.basename(t1_fn)}")
+                if verbose: print("Selected T1 match: {}".format(os.path.basename(t1_fn)))
             else:
-                if verbose: print(f"Warning: No T1 matched '{t1_run_match}'. Using default: {os.path.basename(t1_fn)}")
+                if verbose: print("Warning: No T1 matched '{}'. Using default: {}".format(t1_run_match, os.path.basename(t1_fn)))
 
     image_uid = extract_image_id(t1_fn)
 
     # 3. Setup Staging Area
-    staging_root = os.path.join(tempfile.gettempdir(), f"antsxmm_staging_{sub_id}_{date_id}")
+    staging_root = os.path.join(tempfile.gettempdir(), "antsxmm_staging_{}_{}".format(sub_id, date_id))
     if os.path.exists(staging_root):
         shutil.rmtree(staging_root)
     os.makedirs(staging_root, exist_ok=True)
@@ -433,12 +445,12 @@ def process_session(session_data, output_root, project_id="ANTsX",
         # Pre-execution check
         if verbose:
             print_expected_tree(output_root, project_id, sub_id, date_id, image_uid, 
-                                flair_info, rsf_infos, dti_infos, nm_infos, perf_info, pet_info, separator)
+                        flair_info, rsf_infos, dti_infos, nm_infos, perf_info, pet_info, separator)
 
         if verbose:
-            print(f"\n{'='*80}")
-            print(f"Processing: {sub_id} | {date_id}")
-            print(f"Image UID: {image_uid}")
+            print("\n{}".format('='*80))
+            print("Processing: {} | {}".format(sub_id, date_id))
+            print("Image UID: {}".format(image_uid))
 
         # Run antspymm preprocessing
         study_csv = antspymm.generate_mm_dataframe(
@@ -463,6 +475,7 @@ def process_session(session_data, output_root, project_id="ANTsX",
             study_csv['flairid'] = image_uid
         
         # Align IDs for DTI/RSF
+        # We explicitly use the ID from the staged file to preserve multi-run information
         if rsf_infos:
             if 'rsfid1' in study_csv.columns: study_csv['rsfid1'] = rsf_infos[0][2]
             if 'rsfid2' in study_csv.columns and len(rsf_infos) > 1: study_csv['rsfid2'] = rsf_infos[1][2]
@@ -524,18 +537,18 @@ def process_session(session_data, output_root, project_id="ANTsX",
                     
                     t1_hier_dir = os.path.join(session_output_dir, "T1wHierarchical", image_uid)
                     if os.path.exists(t1_hier_dir):
-                        filename = f"{project_id}{separator}{sub_id}{separator}{date_id}{separator}T1wHierarchical{separator}{image_uid}{separator}mmwide_merged.csv"
+                        filename = "T1wHierarchical{}mmwide_merged.csv".format(separator)
                         out_path = os.path.join(t1_hier_dir, filename)
                         wide_df.to_csv(out_path, index=False)
                         if verbose:
-                            print(f"[SUCCESS] Session merged wide table written to:\n  {out_path}")
+                            print("[SUCCESS] Session merged wide table written to:\n {}".format(out_path))
                     else:
                         if verbose:
-                            print(f"[WARNING] T1wHierarchical directory not found: {t1_hier_dir}")
+                            print("[WARNING] T1wHierarchical directory not found: {}".format(t1_hier_dir))
 
                 except Exception as e:
                     if verbose:
-                        print("Warning: Failed to build wide table:", e)
+                        print("Warning: Failed to build wide table: {}".format(e))
                     result['wide_df'] = None
 
         return result
