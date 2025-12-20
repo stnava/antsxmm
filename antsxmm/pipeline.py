@@ -1,5 +1,6 @@
 import click
 import os
+import sys
 import pandas as pd
 from tqdm import tqdm
 import antspymm
@@ -7,62 +8,64 @@ import antspyt1w
 
 # Local imports
 try:
-    from .bids import parse_antsxbids_layout
-    from .core import process_session
-    from ._version import version as __version__
+  from .bids import parse_antsxbids_layout
+  from .core import process_session
+  from ._version import version as __version__
 except ImportError:
-    from antsxmm.bids import parse_antsxbids_layout
-    from antsxmm.core import process_session
-    try:
-        from importlib.metadata import version
-        __version__ = version("antsxmm")
-    except:
-        __version__ = "0.0.0-dev"
+  from antsxmm.bids import parse_antsxbids_layout
+  from antsxmm.core import process_session
+  try:
+    from importlib.metadata import version
+    __version__ = version("antsxmm")
+  except:
+    __version__ = "0.0.0-dev"
 
 def run_study(bids_dir, output_dir, project, denoise_dti=True, 
-              participant_label=None, session_label=None, separator='+', t1_run=None):
-              
-    print(f"Parsing BIDS layout from: {bids_dir}")
-    layout_df = parse_antsxbids_layout(bids_dir)
-    
-    # Filter for specific participant if requested
-    if participant_label:
-        layout_df = layout_df[layout_df['subjectID'] == participant_label]
-        print(f"Filtering for subject: {participant_label}")
-
-    # Filter for specific session if requested
-    if session_label:
-        layout_df = layout_df[layout_df['date'] == session_label]
-        print(f"Filtering for session: {session_label}")
-
-    if layout_df.empty:
-        print("No valid subjects/sessions found.")
-        return
-
-    print(f"Found {len(layout_df)} unique sessions to process.")
-    os.makedirs(output_dir, exist_ok=True)
-    
-    failures = []
-    
-    for idx, row in tqdm(layout_df.iterrows(), total=layout_df.shape[0]):
-        result = process_session(
-            row, 
-            output_root=output_dir, 
-            project_id=project,
-            denoise_dti=denoise_dti,
-            dti_moco='SyN',
-            separator=separator,
-            build_wide_table=True,
-            t1_run_match=t1_run  # Pass T1 filter
-        )
+       participant_label=None, session_label=None, separator='+', t1_run=None):
         
-        if not result['success']:
-            failures.append(f"{row['subjectID']}_{row['date']}")
+  print("Parsing BIDS layout from: {}".format(bids_dir))
+  layout_df = parse_antsxbids_layout(bids_dir)
+   
+  # Filter for specific participant if requested
+  if participant_label:
+    layout_df = layout_df[layout_df['subjectID'] == participant_label]
+    print("Filtering for subject: {}".format(participant_label))
 
-    if failures:
-        print(f"Finished with {len(failures)} errors: {failures}")
-    else:
-        print("Processing complete successfully.")
+  # Filter for specific session if requested
+  if session_label:
+    layout_df = layout_df[layout_df['date'] == session_label]
+    print("Filtering for session: {}".format(session_label))
+
+  if layout_df.empty:
+    print("No valid subjects/sessions found.")
+    return []
+
+  print("Found {} unique sessions to process.".format(len(layout_df)))
+  os.makedirs(output_dir, exist_ok=True)
+   
+  failures = []
+   
+  for idx, row in tqdm(layout_df.iterrows(), total=layout_df.shape[0]):
+    result = process_session(
+      row, 
+      output_root=output_dir, 
+      project_id=project,
+      denoise_dti=denoise_dti,
+      dti_moco='SyN',
+      separator=separator,
+      build_wide_table=True,
+      t1_run_match=t1_run # Pass T1 filter
+    )
+     
+    if not result['success']:
+      failures.append("{}_{}".format(row['subjectID'], row['date']))
+
+  if failures:
+    print("Finished with {} errors: {}".format(len(failures), failures))
+  else:
+    print("Processing complete successfully.")
+    
+  return failures
 
 @click.command()
 @click.argument('bids_dir', type=click.Path(exists=True))
@@ -76,17 +79,20 @@ def run_study(bids_dir, output_dir, project, denoise_dti=True,
 @click.option('--separator', default='+', help='Character to separate filename components (default: +)')
 @click.version_option(__version__)
 def main(bids_dir, output_dir, project, dl_weights, denoise, participant_label, session_label, t1_run, separator):
-    """
-    ANTSXMM: Streamlined ANTsPyMM wrapper for ANTSXBIDS output.
-    """
-    print(f"antsxmm {__version__}")
-    # 1. Setup Data
-    if dl_weights:
-        print("Downloading templates and weights...")
-        antspyt1w.get_data(force_download=True)
-        antspymm.get_data(force_download=True)
+  """
+  ANTSXMM: Streamlined ANTsPyMM wrapper for ANTSXBIDS output.
+  """
+  print("antsxmm {}".format(__version__))
+  # 1. Setup Data
+  if dl_weights:
+    print("Downloading templates and weights...")
+    antspyt1w.get_data(force_download=True)
+    antspymm.get_data(force_download=True)
 
-    run_study(bids_dir, output_dir, project, denoise, participant_label, session_label, separator, t1_run)
+  failures = run_study(bids_dir, output_dir, project, denoise, participant_label, session_label, separator, t1_run)
+
+  if failures:
+    sys.exit(1)
 
 if __name__ == '__main__': # pragma: no cover
-    main()
+  main()
