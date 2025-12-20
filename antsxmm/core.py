@@ -518,7 +518,9 @@ def process_session(session_data, output_root, project_id="ANTsX",
                     
                     t1_hier_dir = os.path.join(session_output_dir, "T1wHierarchical", image_uid)
                     if os.path.exists(t1_hier_dir):
-                        filename = "T1wHierarchical{}mmwide_merged.csv".format(separator)
+                        prefix = project_id + separator + sub_id + separator + date_id + separator
+                        prefix = prefix + "T1wHierarchical" + separator + image_uid
+                        filename = prefix+separator+"mmwidemerged.csv".format(separator)
                         out_path = os.path.join(t1_hier_dir, filename)
                         wide_df.to_csv(out_path, index=False)
                         if verbose:
