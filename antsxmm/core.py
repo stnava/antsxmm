@@ -409,7 +409,7 @@ def process_session(session_data, output_root, project_id="ANTsX",
     # This prevents antspymm ValueError: len( ... ) > 3
     if len(rsf_paths) > 2:
         if verbose:
-            print("NOTE: Found {} rsfMRI images. Selecting the first 2 only to satisfy antspymm requirements.".format(len(rsf_paths)))
+            print("NOTE: Found more then 2 sets of rsfMRI images. Selecting the first 2 only to satisfy antspymm requirements.")
         rsf_paths = rsf_paths[:2]
         rsf_infos = rsf_infos[:2]
 
@@ -430,7 +430,7 @@ def process_session(session_data, output_root, project_id="ANTsX",
     # This prevents antspymm ValueError: len( dti_filenames ) > 3
     if len(dti_paths) > 2:
         if verbose:
-        print("NOTE: Found {} DTI images. Selecting the first 2 only to satisfy antspymm requirements.".format(len(dti_paths)))
+            print("NOTE: Found more then 2 sets of DTI images. Selecting the first 2 only to satisfy antspymm requirements.")
         dti_paths = dti_paths[:2]
         dti_infos = dti_infos[:2]
 
