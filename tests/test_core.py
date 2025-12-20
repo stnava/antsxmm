@@ -153,6 +153,32 @@ def test_process_session_t1_filter_and_dwi_persistence(mock_multi_run_data, tmp_
     assert final_df['dtid1'].iloc[0] == "placeholder"
     assert final_df['dtid2'].iloc[0] == "placeholder"
 
+def test_process_session_dti_truncation(tmp_path):
+    # Setup data with 4 DTIs
+    dtis = [tmp_path / "dti{}.nii.gz".format(i) for i in range(4)]
+    for p in dtis: p.touch()
+    
+    data = {
+      'subjectID': 'sub', 'date': 'ses', 
+      't1_filenames': [str(tmp_path/"t1.nii.gz")], 
+      'dti_filenames': [str(p) for p in dtis]
+    }
+    (tmp_path/"t1.nii.gz").touch()
+
+    with patch("antspymm.generate_mm_dataframe") as mock_gen, \
+         patch("antspymm.mm_csv"), \
+         patch("antspymm.get_data"), \
+         patch("antsxmm.core.build_wide_table_from_mmwide"):
+         
+        mock_gen.return_value = pd.DataFrame()
+        
+        process_session(data, str(tmp_path), verbose=True)
+        
+        # Check that only 2 files were passed to generate_mm_dataframe
+        args, kwargs = mock_gen.call_args
+        assert len(kwargs['dti_filenames']) == 2
+
+
 # -----------------------------------------------------------------------------
 # 3. Wide Table & Helpers
 # -----------------------------------------------------------------------------

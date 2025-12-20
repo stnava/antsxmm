@@ -405,6 +405,15 @@ def process_session(session_data, output_root, project_id="ANTsX",
             rsf_infos.append((path, mod, unique_id))
             rsf_paths.append(path)
 
+    # NOTE: Truncate to first 2 rsf images if > 2 found.
+    # This prevents antspymm ValueError: len( ... ) > 3
+    if len(rsf_paths) > 2:
+        if verbose:
+            print("NOTE: Found {} rsfMRI images. Selecting the first 2 only to satisfy antspymm requirements.".format(len(rsf_paths)))
+        rsf_paths = rsf_paths[:2]
+        rsf_infos = rsf_infos[:2]
+
+
     # DTI
     dti_raw = session_data.get('dti_filenames', [])
     dti_infos = []
@@ -416,6 +425,14 @@ def process_session(session_data, output_root, project_id="ANTsX",
         if path:
             dti_infos.append((path, mod, unique_id))
             dti_paths.append(path)
+
+    # NOTE: Truncate to first 2 DTI images if > 2 found.
+    # This prevents antspymm ValueError: len( dti_filenames ) > 3
+    if len(dti_paths) > 2:
+        if verbose:
+        print("NOTE: Found {} DTI images. Selecting the first 2 only to satisfy antspymm requirements.".format(len(dti_paths)))
+        dti_paths = dti_paths[:2]
+        dti_infos = dti_infos[:2]
 
     # NM
     nm_raw = session_data.get('nm_filenames', [])
