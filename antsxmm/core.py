@@ -210,7 +210,7 @@ def check_modality_order(ordered_data, expected_order):
     return True
 
 
-def build_wide_table_from_mmwide(root_dir, sep, verbose=True):
+def build_wide_table_from_mmwide(root_dir, sep="_", verbose=True):
     root = Path(root_dir).expanduser().resolve()
     pattern="*/*" + sep + "mmwide.csv"
     csv_files = sorted(root.rglob(pattern))
