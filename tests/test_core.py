@@ -3,7 +3,6 @@ from unittest.mock import MagicMock, patch, call
 from antsxmm.core import process_session, sanitize_and_stage_file, extract_image_id, get_modality_variant, bind_mm_rows, check_modality_order, build_wide_table_from_mmwide
 import os
 import pandas as pd
-import antspymm 
 from pathlib import Path
 
 # -----------------------------------------------------------------------------
@@ -110,9 +109,9 @@ def test_process_session_t1_filter_and_dwi_persistence(mock_multi_run_data, tmp_
   3. Ensure IDs for DWI are NOT overwritten (they should come from generate_mm_dataframe).
   """
    
-  with patch("antspymm.generate_mm_dataframe") as mock_gen, \
-     patch("antspymm.mm_csv"), \
-     patch("antspymm.get_data", return_value=None):
+  with patch("antsxmm.core.antspymm.generate_mm_dataframe", create=True) as mock_gen, \
+     patch("antsxmm.core.antspymm.mm_csv", create=True) as mock_mm_csv, \
+     patch("antsxmm.core.antspymm.get_data", return_value=None, create=True):
      
     # Mock dataframe return for generate_mm_dataframe
     # We simulate what antspymm would return (empty columns usually filled by csv)
@@ -146,7 +145,6 @@ def test_process_session_t1_filter_and_dwi_persistence(mock_multi_run_data, tmp_
     # to remain untouched.
      
     # We inspect the args passed to mm_csv (which receives the modified dataframe)
-    mock_mm_csv = antspymm.mm_csv
     call_args = mock_mm_csv.call_args[0]
     final_df = call_args[0]
      
@@ -165,9 +163,9 @@ def test_process_session_dti_truncation(tmp_path):
     }
     (tmp_path/"t1.nii.gz").touch()
 
-    with patch("antspymm.generate_mm_dataframe") as mock_gen, \
-         patch("antspymm.mm_csv"), \
-         patch("antspymm.get_data"), \
+    with patch("antsxmm.core.antspymm.generate_mm_dataframe", create=True) as mock_gen, \
+         patch("antsxmm.core.antspymm.mm_csv", create=True), \
+         patch("antsxmm.core.antspymm.get_data", create=True), \
          patch("antsxmm.core.build_wide_table_from_mmwide"):
          
         mock_gen.return_value = pd.DataFrame()

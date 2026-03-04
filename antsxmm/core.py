@@ -1,12 +1,97 @@
 import os
-import antspymm
+import math
+import types
 import pandas as pd
-import ants
+
+try:  # optional dependency for lightweight installs / unit tests
+    import antspymm  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover
+    antspymm = types.SimpleNamespace()  # tests can monkeypatch attributes
+
+try:  # optional dependency for lightweight installs / unit tests
+    import ants  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover
+    ants = types.SimpleNamespace()
 import tempfile
 import shutil
 import re
 import traceback
+import json
 from pathlib import Path
+
+
+def _is_nifti(path: str) -> bool:
+    if not path:
+        return False
+    p = str(path).lower()
+    return p.endswith('.nii') or p.endswith('.nii.gz')
+
+
+
+def _as_path_list(value) -> list[str]:
+    """Normalize a possibly-missing BIDS field into a list of path strings.
+
+    The parser may yield NaN (float) for missing list-valued columns when using pandas.
+    """
+    if value is None:
+        return []
+    # pandas missing values often appear as float('nan')
+    if isinstance(value, float):
+        try:
+            if math.isnan(value):
+                return []
+        except Exception:
+            return []
+    if isinstance(value, (str, os.PathLike)):
+        s = str(value)
+        return [s] if s else []
+    # Avoid iterating over scalars like numpy.float64 / numpy.int64
+    if isinstance(value, (int, float, bool)):
+        return []
+    if isinstance(value, (list, tuple, set)):
+        return [str(v) for v in value if v is not None and not (isinstance(v, float) and math.isnan(v))]
+    # Best-effort support for other iterables
+    try:
+        out = []
+        for v in value:
+            if v is None:
+                continue
+            if isinstance(v, float):
+                try:
+                    if math.isnan(v):
+                        continue
+                except Exception:
+                    continue
+            if isinstance(v, (str, os.PathLike)):
+                out.append(str(v))
+        return out
+    except TypeError:
+        return []
+
+
+def _collect_discovered_inputs(session_data):
+    """Collect discovered inputs from a BIDS session row, robust to NaN fields."""
+    return {
+        't1_filenames': [p for p in _as_path_list(session_data.get('t1_filenames')) if _is_nifti(p) and os.path.exists(p)],
+        'flair_filenames': [p for p in _as_path_list(session_data.get('flair_filenames')) if _is_nifti(p) and os.path.exists(p)],
+        't2w_filenames': [p for p in _as_path_list(session_data.get('t2w_filenames')) if _is_nifti(p) and os.path.exists(p)],
+        'dti_filenames': [p for p in _as_path_list(session_data.get('dti_filenames')) if _is_nifti(p) and os.path.exists(p)],
+        'rsf_filenames': [p for p in _as_path_list(session_data.get('rsf_filenames')) if _is_nifti(p) and os.path.exists(p)],
+        'nm_filenames': [p for p in _as_path_list(session_data.get('nm_filenames')) if _is_nifti(p) and os.path.exists(p)],
+        'perf_filenames': [p for p in _as_path_list(session_data.get('perf_filenames')) if _is_nifti(p) and os.path.exists(p)],
+        'pet3d_filenames': [p for p in _as_path_list(session_data.get('pet3d_filenames')) if _is_nifti(p) and os.path.exists(p)],
+    }
+
+
+def _ensure_dir(path: str) -> None:
+    os.makedirs(path, exist_ok=True)
+
+
+def _write_json(path: str, obj) -> None:
+    tmp = path + ".tmp"
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(obj, f, indent=2, sort_keys=True)
+    os.replace(tmp, path)
 
 def extract_image_id(filename):
     """
@@ -47,6 +132,17 @@ def sanitize_and_stage_file(filepath, project, subject, date, base_modality, ima
     """
     Stages a file into a strict NRG directory structure in tmp.
     """
+    # Pandas rows may contain NaN for missing entries; those come through as
+    # floats and will break os.path operations. Treat all missing/non-path
+    # values as absent.
+    if filepath is None:
+        return None, None, None
+    if isinstance(filepath, float) and pd.isna(filepath):
+        return None, None, None
+    if not isinstance(filepath, (str, os.PathLike)):
+        return None, None, None
+
+    filepath = os.fspath(filepath)
     if not filepath:
         return None, None, None
 
@@ -344,7 +440,8 @@ def build_wide_table_from_mmwide(root_dir, sep="_", verbose=True):
 
 def process_session(session_data, output_root, project_id="ANTsX",
           denoise_dti=True, dti_moco='SyN', separator='_', verbose=True,
-          build_wide_table=True, t1_run_match=None):
+          build_wide_table=True, t1_run_match=None,
+          write_input_manifest: bool = True):
     """
     Runs the full ANTsPyMM pipeline on one session.
     """
@@ -359,7 +456,7 @@ def process_session(session_data, output_root, project_id="ANTsX",
     date_id = session_data['date']
 
     # 2. Select T1 based on run_match if provided
-    all_t1s = session_data.get('t1_filenames', [])
+    all_t1s = _as_path_list(session_data.get('t1_filenames'))
     if not all_t1s:
         if 't1_filename' in session_data:
             t1_fn = session_data['t1_filename']
@@ -388,13 +485,27 @@ def process_session(session_data, output_root, project_id="ANTsX",
     # T1w
     t1_path, _, _ = sanitize_and_stage_file(t1_fn, project_id, sub_id, date_id, "T1w", image_uid, separator, staging_root, verbose)
 
-    # FLAIR
+    # FLAIR (fallback: T2w if FLAIR absent)
     flair_raw = session_data.get('flair_filename', None)
-    flair_path, flair_mod, flair_id = sanitize_and_stage_file(flair_raw, project_id, sub_id, date_id, "T2Flair", image_uid, separator, staging_root, verbose)
+    # guard NaN / non-paths
+    if isinstance(flair_raw, float) and pd.isna(flair_raw):
+        flair_raw = None
+    if not isinstance(flair_raw, (str, os.PathLike)):
+        flair_raw = None
+    if not flair_raw:
+        t2_raw = session_data.get('t2w_filename', None)
+        if isinstance(t2_raw, float) and pd.isna(t2_raw):
+            t2_raw = None
+        if isinstance(t2_raw, (str, os.PathLike)):
+            flair_raw = os.fspath(t2_raw)
+
+    flair_path, flair_mod, flair_id = sanitize_and_stage_file(
+        flair_raw, project_id, sub_id, date_id, "T2Flair", image_uid, separator, staging_root, verbose
+    )
     flair_info = (flair_path, flair_mod, flair_id)
 
     # rsfMRI
-    rsf_raw = session_data.get('rsf_filenames', [])
+    rsf_raw = _as_path_list(session_data.get('rsf_filenames'))
     rsf_infos = []
     rsf_paths = []
     for f in rsf_raw:
@@ -416,7 +527,7 @@ def process_session(session_data, output_root, project_id="ANTsX",
 
 
     # DTI
-    dti_raw = session_data.get('dti_filenames', [])
+    dti_raw = _as_path_list(session_data.get('dti_filenames'))
     dti_infos = []
     dti_paths = []
     for f in dti_raw:
@@ -436,7 +547,7 @@ def process_session(session_data, output_root, project_id="ANTsX",
         dti_infos = dti_infos[:2]
 
     # NM
-    nm_raw = session_data.get('nm_filenames', [])
+    nm_raw = _as_path_list(session_data.get('nm_filenames'))
     nm_infos = []
     nm_paths = []
     for f in nm_raw:
@@ -449,17 +560,102 @@ def process_session(session_data, output_root, project_id="ANTsX",
 
     # Perf
     perf_raw = session_data.get('perf_filename', None)
-    perf_path, perf_mod, perf_id = sanitize_and_stage_file(perf_raw, project_id, sub_id, date_id, "perf", image_uid, separator, staging_root, verbose=verbose)
+    if isinstance(perf_raw, float) and pd.isna(perf_raw):
+        perf_raw = None
+    if not isinstance(perf_raw, (str, os.PathLike)):
+        perf_raw = None
+    perf_path, perf_mod, perf_id = sanitize_and_stage_file(
+        perf_raw, project_id, sub_id, date_id, "perf", image_uid, separator, staging_root, verbose=verbose
+    )
     perf_info = (perf_path, perf_mod, perf_id)
 
     # PET
     pet_raw = session_data.get('pet3d_filename', None)
-    pet_path, pet_mod, pet_id = sanitize_and_stage_file(pet_raw, project_id, sub_id, date_id, "pet3d", image_uid, separator, staging_root, verbose=verbose)
+    if isinstance(pet_raw, float) and pd.isna(pet_raw):
+        pet_raw = None
+    if not isinstance(pet_raw, (str, os.PathLike)):
+        pet_raw = None
+    pet_path, pet_mod, pet_id = sanitize_and_stage_file(
+        pet_raw, project_id, sub_id, date_id, "pet3d", image_uid, separator, staging_root, verbose=verbose
+    )
     pet_info = (pet_path, pet_mod, pet_id)
 
     mock_source_dir = staging_root
 
+    # Persist an input manifest that enumerates exactly which NIfTIs will be processed.
+    session_out_dir = os.path.join(output_root, project_id, sub_id, date_id)
+    if write_input_manifest:
+        _ensure_dir(session_out_dir)
+
+        # Discoveries (as seen from the BIDS parser row)
+        discovered = _collect_discovered_inputs(session_data)
+
+        used = {
+            't1_filename': t1_fn,
+            'flair_or_t2_as_flair_filename': flair_raw,
+            'rsf_filenames': [os.path.realpath(p) for p in rsf_paths],
+            'dti_filenames': [os.path.realpath(p) for p in dti_paths],
+            'nm_filenames': [os.path.realpath(p) for p in nm_paths],
+            'perf_filename': perf_raw,
+            'pet3d_filename': pet_raw,
+        }
+
+        if verbose:
+            print("[VERBOSE] Discovered inputs:")
+            for k, v in discovered.items():
+                print(f"  - {k}: {v}")
+            print("[VERBOSE] Selected inputs (will be staged/processed):")
+            for k, v in used.items():
+                print(f"  - {k}: {v}")
+
+        # Exclusions due to truncation / selection.
+        excluded = {
+            'rsf_truncated': [p for p in discovered.get('rsf_filenames', []) if p not in [os.path.realpath(x) for x in rsf_paths]],
+            'dti_truncated': [p for p in discovered.get('dti_filenames', []) if p not in [os.path.realpath(x) for x in dti_paths]],
+            't1_not_selected': [p for p in discovered.get('t1_filenames', []) if p != os.path.realpath(t1_fn)],
+            'flair_candidates_not_selected': [p for p in (discovered.get('flair_filenames', []) + discovered.get('t2w_filenames', [])) if flair_raw and p != os.path.realpath(flair_raw)],
+        }
+
+        manifest = {
+            'schema_version': 1,
+            'project_id': project_id,
+            'subjectID': sub_id,
+            'sessionID': date_id,
+            'session_path': session_data.get('session_path'),
+            'selection_rules': {
+                'requires_T1w': True,
+                't1_run_match': t1_run_match,
+                'flair_fallback_to_T2w': True,
+                'truncate_rsfMRI_to_first_n': 2,
+                'truncate_DTI_to_first_n': 2,
+                'perf_select_single': True,
+                'pet_select_single': True,
+            },
+            'discovered': discovered,
+            'used_inputs': used,
+            'nifti_inputs_that_will_be_processed': sorted(
+                [os.path.realpath(p) for p in [t1_fn, flair_raw, perf_raw, pet_raw] if p] +
+                [os.path.realpath(p) for p in rsf_paths] +
+                [os.path.realpath(p) for p in dti_paths] +
+                [os.path.realpath(p) for p in nm_paths]
+            ),
+            'excluded': excluded,
+        }
+
+        manifest_path = os.path.join(
+            session_out_dir,
+            f"{project_id}{separator}{sub_id}{separator}{date_id}{separator}mm_inputs.json",
+        )
+        _write_json(manifest_path, manifest)
+        if verbose:
+            print(f"[INFO] Wrote input manifest: {manifest_path}")
+
     try:
+        if not hasattr(antspymm, 'generate_mm_dataframe') or not hasattr(antspymm, 'mm_csv'):
+            raise ModuleNotFoundError(
+                "antspymm is required to run antsxmm processing. Install antspymm (and ants) to execute the pipeline."
+            )
+
         # Pre-execution check
         if verbose:
             print_expected_tree(output_root, project_id, sub_id, date_id, image_uid, 

@@ -3,8 +3,17 @@ import os
 import sys
 import pandas as pd
 from tqdm import tqdm
-import antspymm
-import antspyt1w
+import types
+
+try:  # optional dependency for lightweight installs / unit tests
+  import antspymm  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover
+  antspymm = types.SimpleNamespace()
+
+try:  # optional dependency for lightweight installs / unit tests
+  import antspyt1w  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover
+  antspyt1w = types.SimpleNamespace()
 
 # Local imports
 try:
@@ -20,8 +29,18 @@ except ImportError:
   except:
     __version__ = "0.0.0-dev"
 
-def run_study(bids_dir, output_dir, project, denoise_dti=True, 
-       participant_label=None, session_label=None, separator='+', t1_run=None):
+def run_study(
+    bids_dir,
+    output_dir,
+    project,
+    denoise_dti=True,
+    participant_label=None,
+    session_label=None,
+    separator='+',
+    t1_run=None,
+    write_input_manifest: bool = True,
+    verbose: bool = False,
+):
         
   print("Parsing BIDS layout from: {}".format(bids_dir))
   layout_df = parse_antsxbids_layout(bids_dir)
@@ -54,7 +73,9 @@ def run_study(bids_dir, output_dir, project, denoise_dti=True,
       dti_moco='SyN',
       separator=separator,
       build_wide_table=True,
-      t1_run_match=t1_run # Pass T1 filter
+      t1_run_match=t1_run, # Pass T1 filter
+      write_input_manifest=write_input_manifest,
+	      verbose=verbose,
     )
      
     if not result['success']:
@@ -77,19 +98,36 @@ def run_study(bids_dir, output_dir, project, denoise_dti=True,
 @click.option('--session-label', help='Specific session ID to process (e.g. ses-20230405)')
 @click.option('--t1-run', help='Specific T1 run string to match (e.g. r0002)')
 @click.option('--separator', default='+', help='Character to separate filename components (default: +)')
+@click.option('--input-manifest/--no-input-manifest', default=True, help='Write a per-session JSON listing exactly which NIfTI inputs will be processed')
+@click.option('--verbose/--no-verbose', default=False, help='Print discovered files and selected inputs per session')
 @click.version_option(__version__)
-def main(bids_dir, output_dir, project, dl_weights, denoise, participant_label, session_label, t1_run, separator):
+def main(bids_dir, output_dir, project, dl_weights, denoise, participant_label, session_label, t1_run, separator, input_manifest, verbose):
   """
   ANTSXMM: Streamlined ANTsPyMM wrapper for ANTSXBIDS output.
   """
   print("antsxmm {}".format(__version__))
   # 1. Setup Data
   if dl_weights:
+    if not hasattr(antspyt1w, 'get_data') or not hasattr(antspymm, 'get_data'):
+      raise ModuleNotFoundError(
+        "--dl-weights requires antspyt1w and antspymm to be installed."
+      )
     print("Downloading templates and weights...")
     antspyt1w.get_data(force_download=True)
     antspymm.get_data(force_download=True)
 
-  failures = run_study(bids_dir, output_dir, project, denoise, participant_label, session_label, separator, t1_run)
+  failures = run_study(
+    bids_dir,
+    output_dir,
+    project,
+    denoise,
+    participant_label,
+    session_label,
+    separator,
+    t1_run,
+    write_input_manifest=input_manifest,
+	    verbose=verbose,
+  )
 
   if failures:
     sys.exit(1)

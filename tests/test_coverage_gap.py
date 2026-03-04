@@ -39,9 +39,9 @@ def test_process_session_wide_table_failure(tmp_path):
     data = {'subjectID': 's', 'date': 'd', 't1_filenames': ['/tmp/fake.nii.gz']}
     
     with patch('antsxmm.core.sanitize_and_stage_file', return_value=('/tmp/f', 'm', 'i')), \
-         patch('antspymm.generate_mm_dataframe'), \
-         patch('antspymm.mm_csv'), \
-         patch('antspymm.get_data'), \
+         patch('antsxmm.core.antspymm.generate_mm_dataframe', create=True), \
+         patch('antsxmm.core.antspymm.mm_csv', create=True), \
+         patch('antsxmm.core.antspymm.get_data', create=True), \
          patch('antsxmm.core.build_wide_table_from_mmwide', side_effect=Exception("Fail")):
         
         # Should not crash, just log warning
