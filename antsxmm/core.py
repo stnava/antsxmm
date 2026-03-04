@@ -71,15 +71,30 @@ def _as_path_list(value) -> list[str]:
 
 def _collect_discovered_inputs(session_data):
     """Collect discovered inputs from a BIDS session row, robust to NaN fields."""
+    def _norm(p: str) -> str:
+        # Normalize to an absolute, canonical path.
+        # This prevents downstream manifest logic from mixing relative and absolute forms.
+        return os.path.realpath(p)
+
+    def _collect(key: str) -> list[str]:
+        out: list[str] = []
+        for p in _as_path_list(session_data.get(key)):
+            if not _is_nifti(p):
+                continue
+            if not os.path.exists(p):
+                continue
+            out.append(_norm(p))
+        return out
+
     return {
-        't1_filenames': [p for p in _as_path_list(session_data.get('t1_filenames')) if _is_nifti(p) and os.path.exists(p)],
-        'flair_filenames': [p for p in _as_path_list(session_data.get('flair_filenames')) if _is_nifti(p) and os.path.exists(p)],
-        't2w_filenames': [p for p in _as_path_list(session_data.get('t2w_filenames')) if _is_nifti(p) and os.path.exists(p)],
-        'dti_filenames': [p for p in _as_path_list(session_data.get('dti_filenames')) if _is_nifti(p) and os.path.exists(p)],
-        'rsf_filenames': [p for p in _as_path_list(session_data.get('rsf_filenames')) if _is_nifti(p) and os.path.exists(p)],
-        'nm_filenames': [p for p in _as_path_list(session_data.get('nm_filenames')) if _is_nifti(p) and os.path.exists(p)],
-        'perf_filenames': [p for p in _as_path_list(session_data.get('perf_filenames')) if _is_nifti(p) and os.path.exists(p)],
-        'pet3d_filenames': [p for p in _as_path_list(session_data.get('pet3d_filenames')) if _is_nifti(p) and os.path.exists(p)],
+        't1_filenames': _collect('t1_filenames'),
+        'flair_filenames': _collect('flair_filenames'),
+        't2w_filenames': _collect('t2w_filenames'),
+        'dti_filenames': _collect('dti_filenames'),
+        'rsf_filenames': _collect('rsf_filenames'),
+        'nm_filenames': _collect('nm_filenames'),
+        'perf_filenames': _collect('perf_filenames'),
+        'pet3d_filenames': _collect('pet3d_filenames'),
     }
 
 
@@ -623,14 +638,21 @@ def process_session(
         # Discoveries (as seen from the BIDS parser row)
         discovered = _collect_discovered_inputs(session_data)
 
+        def _rp(p: str | None):
+            if not p:
+                return None
+            if not isinstance(p, (str, os.PathLike)):
+                return None
+            return os.path.realpath(str(p))
+
         used = {
-            't1_filename': t1_fn,
-            'flair_or_t2_as_flair_filename': flair_raw,
+            't1_filename': _rp(t1_fn),
+            'flair_or_t2_as_flair_filename': _rp(flair_raw),
             'rsf_filenames': [os.path.realpath(p) for p in rsf_paths],
             'dti_filenames': [os.path.realpath(p) for p in dti_paths],
             'nm_filenames': [os.path.realpath(p) for p in nm_paths],
-            'perf_filename': perf_raw,
-            'pet3d_filename': pet_raw,
+            'perf_filename': _rp(perf_raw),
+            'pet3d_filename': _rp(pet_raw),
         }
 
         if verbose:
@@ -642,11 +664,20 @@ def process_session(
                 print(f"  - {k}: {v}")
 
         # Exclusions due to truncation / selection.
+        used_rsf = set(used['rsf_filenames'])
+        used_dti = set(used['dti_filenames'])
+        used_t1 = used['t1_filename']
+        used_flair = used['flair_or_t2_as_flair_filename']
+
         excluded = {
-            'rsf_truncated': [p for p in discovered.get('rsf_filenames', []) if p not in [os.path.realpath(x) for x in rsf_paths]],
-            'dti_truncated': [p for p in discovered.get('dti_filenames', []) if p not in [os.path.realpath(x) for x in dti_paths]],
-            't1_not_selected': [p for p in discovered.get('t1_filenames', []) if p != os.path.realpath(t1_fn)],
-            'flair_candidates_not_selected': [p for p in (discovered.get('flair_filenames', []) + discovered.get('t2w_filenames', [])) if flair_raw and p != os.path.realpath(flair_raw)],
+            'rsf_truncated': [p for p in discovered.get('rsf_filenames', []) if p not in used_rsf],
+            'dti_truncated': [p for p in discovered.get('dti_filenames', []) if p not in used_dti],
+            't1_not_selected': [p for p in discovered.get('t1_filenames', []) if used_t1 and p != used_t1],
+            'flair_candidates_not_selected': [
+                p
+                for p in (discovered.get('flair_filenames', []) + discovered.get('t2w_filenames', []))
+                if used_flair and p != used_flair
+            ],
         }
 
         manifest = {
