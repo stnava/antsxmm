@@ -438,10 +438,20 @@ def build_wide_table_from_mmwide(root_dir, sep="_", verbose=True):
     return wide
 
 
-def process_session(session_data, output_root, project_id="ANTsX",
-          denoise_dti=True, dti_moco='SyN', separator='_', verbose=True,
-          build_wide_table=True, t1_run_match=None,
-          write_input_manifest: bool = True):
+def process_session(
+    session_data,
+    output_root,
+    project_id: str = "ANTsX",
+    *,
+    denoise: bool | None = None,
+    denoise_dti: bool = True,
+    dti_moco='SyN',
+    separator: str = '_',
+    verbose: bool = True,
+    build_wide_table: bool = True,
+    t1_run_match=None,
+    write_input_manifest: bool = True,
+):
     """
     Runs the full ANTsPyMM pipeline on one session.
     """
@@ -452,8 +462,17 @@ def process_session(session_data, output_root, project_id="ANTsX",
     }
 
     # 1. Setup paths
-    sub_id = session_data['subjectID']
-    date_id = session_data['date']
+    sub_id = session_data.get('subjectID')
+    if not sub_id:
+        raise KeyError("session_data missing required key: 'subjectID'")
+
+    # Historically, callers used a variety of keys for session/date.
+    # Prefer 'date' when present but accept 'sessionID' as an alias.
+    date_id = session_data.get('date')
+    if not date_id:
+        date_id = session_data.get('sessionID')
+    if not date_id:
+        raise KeyError("session_data missing required key: 'date' (or alias 'sessionID')")
 
     # 2. Select T1 based on run_match if provided
     all_t1s = _as_path_list(session_data.get('t1_filenames'))
@@ -486,6 +505,7 @@ def process_session(session_data, output_root, project_id="ANTsX",
     t1_path, _, _ = sanitize_and_stage_file(t1_fn, project_id, sub_id, date_id, "T1w", image_uid, separator, staging_root, verbose)
 
     # FLAIR (fallback: T2w if FLAIR absent)
+    # Support both scalar and list-valued columns.
     flair_raw = session_data.get('flair_filename', None)
     # guard NaN / non-paths
     if isinstance(flair_raw, float) and pd.isna(flair_raw):
@@ -493,11 +513,18 @@ def process_session(session_data, output_root, project_id="ANTsX",
     if not isinstance(flair_raw, (str, os.PathLike)):
         flair_raw = None
     if not flair_raw:
+        flair_list = _as_path_list(session_data.get('flair_filenames'))
+        flair_raw = flair_list[0] if flair_list else None
+
+    if not flair_raw:
         t2_raw = session_data.get('t2w_filename', None)
         if isinstance(t2_raw, float) and pd.isna(t2_raw):
             t2_raw = None
         if isinstance(t2_raw, (str, os.PathLike)):
             flair_raw = os.fspath(t2_raw)
+        else:
+            t2_list = _as_path_list(session_data.get('t2w_filenames'))
+            flair_raw = t2_list[0] if t2_list else None
 
     flair_path, flair_mod, flair_id = sanitize_and_stage_file(
         flair_raw, project_id, sub_id, date_id, "T2Flair", image_uid, separator, staging_root, verbose
@@ -564,6 +591,9 @@ def process_session(session_data, output_root, project_id="ANTsX",
         perf_raw = None
     if not isinstance(perf_raw, (str, os.PathLike)):
         perf_raw = None
+    if not perf_raw:
+        perf_list = _as_path_list(session_data.get('perf_filenames'))
+        perf_raw = perf_list[0] if perf_list else None
     perf_path, perf_mod, perf_id = sanitize_and_stage_file(
         perf_raw, project_id, sub_id, date_id, "perf", image_uid, separator, staging_root, verbose=verbose
     )
@@ -575,6 +605,9 @@ def process_session(session_data, output_root, project_id="ANTsX",
         pet_raw = None
     if not isinstance(pet_raw, (str, os.PathLike)):
         pet_raw = None
+    if not pet_raw:
+        pet_list = _as_path_list(session_data.get('pet3d_filenames'))
+        pet_raw = pet_list[0] if pet_list else None
     pet_path, pet_mod, pet_id = sanitize_and_stage_file(
         pet_raw, project_id, sub_id, date_id, "pet3d", image_uid, separator, staging_root, verbose=verbose
     )
@@ -630,6 +663,8 @@ def process_session(session_data, output_root, project_id="ANTsX",
                 'truncate_DTI_to_first_n': 2,
                 'perf_select_single': True,
                 'pet_select_single': True,
+                # For compatibility with older CLIs; not currently wired into antspymm.
+                'denoise_requested': bool(denoise) if denoise is not None else None,
             },
             'discovered': discovered,
             'used_inputs': used,
