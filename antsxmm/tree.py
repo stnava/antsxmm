@@ -62,6 +62,14 @@ def predict_tree(subject_dir: str | Path) -> tuple[str, str, Dict[str, List[Tupl
             if "_asl" in f.name:
                 runs.append(("perf", run_id))
 
+            # FLAIR (passed to antspymm as flair_filename)
+            if "FLAIR" in f.name or "_flair" in f.name.lower():
+                runs.append(("T2Flair", run_id))
+
+            # PET (passed to antspymm as pet3d_filename)
+            if "_pet" in f.name.lower() or f.parent.name.lower() == "pet":
+                runs.append(("pet3d", run_id))
+
         tree[ses.name] = runs
 
     return project, subject, tree
