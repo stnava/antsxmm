@@ -20,28 +20,128 @@ import json
 from pathlib import Path
 
 
+
+def _extract_run_id(text: str) -> str | None:
+    if not text:
+        return None
+    m = re.search(r"(run-\d+)", text)
+    return m.group(1) if m else None
+
+
+def _rename_prefix_run_segment(
+    path: Path, *, project_id: str, subject_id: str, date_id: str, modality: str, run_id: str
+) -> None:
+    """Rename files whose 5th '+'-segment is a verbose run label to the canonical run_id."""
+    prefix = f"{project_id}+{subject_id}+{date_id}+{modality}+"
+    for p in path.iterdir():
+        if not p.is_file():
+            continue
+        name = p.name
+        if not name.startswith(prefix):
+            continue
+        parts = name.split("+")
+        # Expect at least: project, sub, date, modality, runseg, rest...
+        if len(parts) < 6:
+            continue
+        if parts[4] == run_id:
+            continue
+        parts[4] = run_id
+        new_name = "+".join(parts)
+        p.rename(p.with_name(new_name))
+
+
+def _merge_tree(src: Path, dst: Path) -> None:
+    """Move all contents of src into dst, merging directories."""
+    dst.mkdir(parents=True, exist_ok=True)
+    for item in src.iterdir():
+        target = dst / item.name
+        if item.is_dir():
+            _merge_tree(item, target)
+            try:
+                item.rmdir()
+            except OSError:
+                pass
+        else:
+            if target.exists():
+                # If collision, keep existing and skip to avoid data loss.
+                continue
+            item.rename(target)
+    # best-effort cleanup
+    try:
+        src.rmdir()
+    except OSError:
+        pass
+
+
+def _normalize_session_output_tree(
+    session_out: Path, *, project_id: str, subject_id: str, date_id: str
+) -> None:
+    """Normalize output layout to <modality>/<run-id>/ and canonical filename prefixes.
+
+    Handles two common antspymm output quirks:
+      1) modality/<full-stem-containing-run>/ instead of modality/run-XXX/
+      2) modality/run-XXX plus an extra modality/<full-stem-containing-run>/ (merge)
+    Also rewrites the '+'-delimited filename prefix run segment to run-XXX.
+    """
+    if not session_out.exists():
+        return
+
+    for modality_dir in [p for p in session_out.iterdir() if p.is_dir()]:
+        modality = modality_dir.name
+        # Determine candidate run id from directory names or files
+        run_id = _extract_run_id(modality_dir.name)
+        child_dirs = [d for d in modality_dir.iterdir() if d.is_dir()]
+        # If there's a canonical run dir, prefer it
+        canonical_run_dir = None
+        for d in child_dirs:
+            rid = _extract_run_id(d.name)
+            if rid and d.name == rid:
+                canonical_run_dir = d
+                run_id = rid
+                break
+
+        # If no canonical run dir and exactly one child dir, rename it
+        if canonical_run_dir is None and len(child_dirs) == 1:
+            only = child_dirs[0]
+            rid = _extract_run_id(only.name)
+            if rid:
+                run_id = rid
+                canonical_run_dir = modality_dir / rid
+                if only != canonical_run_dir:
+                    only.rename(canonical_run_dir)
+            else:
+                canonical_run_dir = only
+
+        # If we have a run_id but no canonical run dir yet, create one if needed
+        if run_id and canonical_run_dir is None:
+            canonical_run_dir = modality_dir / run_id
+            canonical_run_dir.mkdir(exist_ok=True)
+
+        # Refresh child directory listing after any renames/creates
+        child_dirs = [d for d in modality_dir.iterdir() if d.is_dir()]
+
+        # Merge any extra dirs that contain the same run id into canonical
+        if run_id and canonical_run_dir is not None:
+            for d in child_dirs:
+                if d == canonical_run_dir:
+                    continue
+                if _extract_run_id(d.name) == run_id:
+                    _merge_tree(d, canonical_run_dir)
+
+            # Rewrite filename prefix run segment in canonical
+            _rename_prefix_run_segment(
+                canonical_run_dir,
+                project_id=project_id,
+                subject_id=subject_id,
+                date_id=date_id,
+                modality=modality,
+                run_id=run_id,
+            )
 def _is_nifti(path: str) -> bool:
     if not path:
         return False
     p = str(path).lower()
     return p.endswith('.nii') or p.endswith('.nii.gz')
-
-
-def _resolve_realpath(p: str, *, base: str | None = None) -> str:
-    """Resolve a path to a stable absolute realpath.
-
-    BIDS parsers sometimes yield relative paths. We normalize everything to absolute
-    realpaths so that manifest comparisons (discovered vs used vs excluded) are consistent.
-    """
-    if not p:
-        return p
-    s = str(p)
-    if base and not os.path.isabs(s):
-        # Only use base when the relative path is intended to be relative to a session root.
-        # If the path already includes a root like 'BIDS/...', joining would duplicate segments.
-        if not (s.startswith('BIDS' + os.sep) or s.startswith('BIDS/')):
-            s = os.path.join(base, s)
-    return os.path.realpath(s)
 
 
 
@@ -87,140 +187,21 @@ def _as_path_list(value) -> list[str]:
 
 
 def _collect_discovered_inputs(session_data):
-    """Collect discovered inputs from a BIDS session row, robust to NaN fields.
-
-    All paths are normalized to absolute realpaths to keep manifest accounting stable.
-    """
-    base = session_data.get('session_path')
-    def _norm_list(key: str) -> list[str]:
-        out: list[str] = []
-        for raw in _as_path_list(session_data.get(key)):
-            if not _is_nifti(raw):
-                continue
-            rp = _resolve_realpath(raw, base=base)
-            if os.path.exists(rp):
-                out.append(rp)
-        return out
-
-    discovered = {
-        't1_filenames': _norm_list('t1_filenames'),
-        'flair_filenames': _norm_list('flair_filenames'),
-        't2w_filenames': _norm_list('t2w_filenames'),
-        'dti_filenames': _norm_list('dti_filenames'),
-        'rsf_filenames': _norm_list('rsf_filenames'),
-        'nm_filenames': _norm_list('nm_filenames'),
-        'perf_filenames': _norm_list('perf_filenames'),
-        'pet3d_filenames': _norm_list('pet3d_filenames'),
+    """Collect discovered inputs from a BIDS session row, robust to NaN fields."""
+    return {
+        't1_filenames': [p for p in _as_path_list(session_data.get('t1_filenames')) if _is_nifti(p) and os.path.exists(p)],
+        'flair_filenames': [p for p in _as_path_list(session_data.get('flair_filenames')) if _is_nifti(p) and os.path.exists(p)],
+        't2w_filenames': [p for p in _as_path_list(session_data.get('t2w_filenames')) if _is_nifti(p) and os.path.exists(p)],
+        'dti_filenames': [p for p in _as_path_list(session_data.get('dti_filenames')) if _is_nifti(p) and os.path.exists(p)],
+        'rsf_filenames': [p for p in _as_path_list(session_data.get('rsf_filenames')) if _is_nifti(p) and os.path.exists(p)],
+        'nm_filenames': [p for p in _as_path_list(session_data.get('nm_filenames')) if _is_nifti(p) and os.path.exists(p)],
+        'perf_filenames': [p for p in _as_path_list(session_data.get('perf_filenames')) if _is_nifti(p) and os.path.exists(p)],
+        'pet3d_filenames': [p for p in _as_path_list(session_data.get('pet3d_filenames')) if _is_nifti(p) and os.path.exists(p)],
     }
 
-    # If the parser did not populate perf_filenames, attempt to discover ASL NIfTIs.
-    if not discovered['perf_filenames']:
-        discovered['perf_filenames'] = _discover_perf_from_asl(base)
-
-    return discovered
-
-
-
-def _discover_perf_from_asl(session_path: str | None) -> list[str]:
-    """Best-effort perfusion discovery for BIDS variants.
-
-    Some datasets store ASL NIfTIs under an 'asl/' directory rather than 'perf/'.
-    Downstream processing treats ASL as perfusion, so we map both layouts to perf_filenames.
-    """
-    if not session_path:
-        return []
-    root = os.fspath(session_path)
-    if not os.path.isdir(root):
-        return []
-
-    import glob
-
-    patterns = [
-        os.path.join(root, "perf", "*asl*.nii*"),
-        os.path.join(root, "asl", "*asl*.nii*"),
-        os.path.join(root, "perf", "*_asl.nii*"),
-        os.path.join(root, "asl", "*_asl.nii*"),
-    ]
-
-    candidates: list[str] = []
-    for pat in patterns:
-        for p in glob.glob(pat):
-            if not _is_nifti(p):
-                continue
-            rp = os.path.realpath(p)
-            if os.path.exists(rp):
-                candidates.append(rp)
-
-    # De-dup while preserving a stable order.
-    seen: set[str] = set()
-    out: list[str] = []
-    for p in sorted(candidates):
-        if p in seen:
-            continue
-        seen.add(p)
-        out.append(p)
-    return out
 
 def _ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
-
-
-def _extract_run_id_from_name(name: str) -> str | None:
-    """Extract a canonical run identifier (e.g. 'run-001' or 'r0001') from a name."""
-    m = re.search(r"(?:^|[_+.-])(run-\d+|r\d+)(?:$|[_+.-])", name)
-    return m.group(1) if m else None
-
-
-def _normalize_modality_output_run_dirs(
-    session_out_dir: str,
-    modality: str,
-    expected_run_ids: set[str],
-    *,
-    verbose: bool = False,
-) -> None:
-    """Normalize non-T1 modality output directories to be keyed by run-id.
-
-    Some antspymm pipelines emit output directories named after the full input stem
-    (e.g. 'sub-XXX_ses-01_T2Flair_run-001') instead of just 'run-001'.
-
-    We normalize those directories post-hoc to a stable '<modality>/<run-id>/' layout.
-    The normalization is conservative:
-      - If a canonical run-id directory already exists, we do nothing.
-      - If there are multiple candidate subdirs, we only rename those that contain a run-id
-        and do not collide with an existing canonical dir.
-      - If expected_run_ids is empty, we do nothing.
-    """
-    if not session_out_dir or not modality or not expected_run_ids:
-        return
-    mod_dir = os.path.join(session_out_dir, modality)
-    if not os.path.isdir(mod_dir):
-        return
-
-    # If any canonical run directory exists already, prefer leaving things alone.
-    for rid in expected_run_ids:
-        if os.path.isdir(os.path.join(mod_dir, rid)):
-            return
-
-    subdirs = [d for d in os.listdir(mod_dir) if os.path.isdir(os.path.join(mod_dir, d))]
-    if not subdirs:
-        return
-
-    for d in subdirs:
-        rid = _extract_run_id_from_name(d)
-        if not rid:
-            continue
-        if rid not in expected_run_ids:
-            continue
-        src = os.path.join(mod_dir, d)
-        dst = os.path.join(mod_dir, rid)
-        if os.path.abspath(src) == os.path.abspath(dst):
-            continue
-        if os.path.exists(dst):
-            # Avoid collisions; keep the original in place.
-            continue
-        if verbose:
-            print(f"[INFO] Normalizing output dir: {src} -> {dst}")
-        shutil.move(src, dst)
 
 
 def _write_json(path: str, obj) -> None:
@@ -728,11 +709,8 @@ def process_session(
     if not isinstance(perf_raw, (str, os.PathLike)):
         perf_raw = None
     if not perf_raw:
-            perf_list = _as_path_list(session_data.get('perf_filenames'))
-            if not perf_list:
-                # Fall back to BIDS variants that store ASL under 'asl/' instead of 'perf/'.
-                perf_list = _discover_perf_from_asl(session_data.get('session_path'))
-            perf_raw = perf_list[0] if perf_list else None
+        perf_list = _as_path_list(session_data.get('perf_filenames'))
+        perf_raw = perf_list[0] if perf_list else None
     perf_path, perf_mod, perf_id = sanitize_and_stage_file(
         perf_raw, project_id, sub_id, date_id, "perf", image_uid, separator, staging_root, verbose=verbose
     )
@@ -762,15 +740,14 @@ def process_session(
         # Discoveries (as seen from the BIDS parser row)
         discovered = _collect_discovered_inputs(session_data)
 
-        base = session_data.get('session_path')
         used = {
-            't1_filename': _resolve_realpath(t1_fn, base=base) if t1_fn else None,
-            'flair_or_t2_as_flair_filename': _resolve_realpath(flair_raw, base=base) if flair_raw else None,
-            'rsf_filenames': [_resolve_realpath(p, base=base) for p in rsf_paths],
-            'dti_filenames': [_resolve_realpath(p, base=base) for p in dti_paths],
-            'nm_filenames': [_resolve_realpath(p, base=base) for p in nm_paths],
-            'perf_filename': _resolve_realpath(perf_raw, base=base) if perf_raw else None,
-            'pet3d_filename': _resolve_realpath(pet_raw, base=base) if pet_raw else None,
+            't1_filename': t1_fn,
+            'flair_or_t2_as_flair_filename': flair_raw,
+            'rsf_filenames': [os.path.realpath(p) for p in rsf_paths],
+            'dti_filenames': [os.path.realpath(p) for p in dti_paths],
+            'nm_filenames': [os.path.realpath(p) for p in nm_paths],
+            'perf_filename': perf_raw,
+            'pet3d_filename': pet_raw,
         }
 
         if verbose:
@@ -782,20 +759,11 @@ def process_session(
                 print(f"  - {k}: {v}")
 
         # Exclusions due to truncation / selection.
-        rsf_used = set(used.get('rsf_filenames', []))
-        dti_used = set(used.get('dti_filenames', []))
-        t1_used = used.get('t1_filename')
-        flair_used = used.get('flair_or_t2_as_flair_filename')
-
         excluded = {
-            'rsf_truncated': [p for p in discovered.get('rsf_filenames', []) if p not in rsf_used],
-            'dti_truncated': [p for p in discovered.get('dti_filenames', []) if p not in dti_used],
-            't1_not_selected': [p for p in discovered.get('t1_filenames', []) if t1_used and p != t1_used],
-            'flair_candidates_not_selected': [
-                p
-                for p in (discovered.get('flair_filenames', []) + discovered.get('t2w_filenames', []))
-                if flair_used and p != flair_used
-            ],
+            'rsf_truncated': [p for p in discovered.get('rsf_filenames', []) if p not in [os.path.realpath(x) for x in rsf_paths]],
+            'dti_truncated': [p for p in discovered.get('dti_filenames', []) if p not in [os.path.realpath(x) for x in dti_paths]],
+            't1_not_selected': [p for p in discovered.get('t1_filenames', []) if p != os.path.realpath(t1_fn)],
+            'flair_candidates_not_selected': [p for p in (discovered.get('flair_filenames', []) + discovered.get('t2w_filenames', [])) if flair_raw and p != os.path.realpath(flair_raw)],
         }
 
         manifest = {
@@ -803,7 +771,7 @@ def process_session(
             'project_id': project_id,
             'subjectID': sub_id,
             'sessionID': date_id,
-            'session_path': _resolve_realpath(session_data.get('session_path') or ''),
+            'session_path': session_data.get('session_path'),
             'selection_rules': {
                 'requires_T1w': True,
                 't1_run_match': t1_run_match,
@@ -818,10 +786,10 @@ def process_session(
             'discovered': discovered,
             'used_inputs': used,
             'nifti_inputs_that_will_be_processed': sorted(
-                [p for p in [used.get('t1_filename'), used.get('flair_or_t2_as_flair_filename'), used.get('perf_filename'), used.get('pet3d_filename')] if p]
-                + list(used.get('rsf_filenames', []))
-                + list(used.get('dti_filenames', []))
-                + list(used.get('nm_filenames', []))
+                [os.path.realpath(p) for p in [t1_fn, flair_raw, perf_raw, pet_raw] if p] +
+                [os.path.realpath(p) for p in rsf_paths] +
+                [os.path.realpath(p) for p in dti_paths] +
+                [os.path.realpath(p) for p in nm_paths]
             ),
             'excluded': excluded,
         }
@@ -900,20 +868,15 @@ def process_session(
             srmodel_T1=None, srmodel_NM=None, srmodel_DTI=None
         )
 
-        # Normalize output run directories for non-T1 modalities.
-        session_dir = os.path.join(output_root, project_id, sub_id, date_id)
-        try:
-            flair_run_ids = {flair_id} if flair_id else set()
-            pet_run_ids = {pet_id} if pet_id else set()
-            perf_run_ids = {perf_id} if perf_id else set()
-            # Only normalize the modalities where the run-dir is expected to be a direct child.
-            _normalize_modality_output_run_dirs(session_dir, 'T2Flair', flair_run_ids, verbose=verbose)
-            _normalize_modality_output_run_dirs(session_dir, 'pet3d', pet_run_ids, verbose=verbose)
-            _normalize_modality_output_run_dirs(session_dir, 'perf', perf_run_ids, verbose=verbose)
-        except Exception:
-            # Do not fail the pipeline on a post-processing layout step.
-            if verbose:
-                print("[WARNING] Failed to normalize output run directories")
+
+        # Normalize antspymm output layout and filename prefixes to stable run-id form
+        session_out = Path(output_root) / project_id / sub_id / date_id
+        _normalize_session_output_tree(
+            session_out,
+            project_id=project_id,
+            subject_id=sub_id,
+            date_id=date_id,
+        )
 
         result['success'] = True
         result['session_dir'] = os.path.join(output_root, project_id, sub_id, date_id)
