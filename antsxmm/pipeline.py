@@ -1,39 +1,72 @@
 import os
 import sys
 import types
+import logging
+import warnings
 
 import click
 import pandas as pd
 from tqdm import tqdm
 
+# --- Logging Configuration ---
+def setup_logging(verbose: bool):
+    """Configures logging and silences known library noise."""
+    level = logging.DEBUG if verbose else logging.INFO
+    logging.basicConfig(
+        format="[%(levelname)s] %(message)s",
+        level=level,
+        force=True
+    )
+    
+    if not verbose:
+        # Silence the specific scikit-learn random_state warnings from dependencies
+        warnings.filterwarnings("ignore", category=UserWarning, module="antspyt1w")
+        warnings.filterwarnings("ignore", category=UserWarning, module="antspymm")
 
-try:  # optional dependency for lightweight installs / unit tests
+# --- Optional Dependency Handling ---
+try:
     import antspymm  # type: ignore
-except ModuleNotFoundError:  # pragma: no cover
+except ModuleNotFoundError:
     antspymm = types.SimpleNamespace()
 
-try:  # optional dependency for lightweight installs / unit tests
+try:
     import antspyt1w  # type: ignore
-except ModuleNotFoundError:  # pragma: no cover
+except ModuleNotFoundError:
     antspyt1w = types.SimpleNamespace()
-
 
 try:
     from ._version import version as __version__
     from .bids import parse_antsxbids_layout
     from .core import process_session
-except ImportError:  # pragma: no cover
-    from antsxmm.bids import parse_antsxbids_layout
-    from antsxmm.core import process_session
-
+except ImportError:
+    # Fallback for local development/non-installed runs
     try:
+        from antsxmm.bids import parse_antsxbids_layout
+        from antsxmm.core import process_session
         from importlib.metadata import version
-
         __version__ = version("antsxmm")
     except Exception:
         __version__ = "0.0.0-dev"
 
+# --- Shared Options Decorator ---
+def pipeline_options(f):
+    """Re-usable options for the pipeline to ensure consistent CLI behavior."""
+    options = [
+        click.option("--project", default="Project", help="Project ID string for file naming."),
+        click.option("--dl-weights", is_flag=True, help="Force download of ANTsPyMM/T1w weights."),
+        click.option("--denoise/--no-denoise", default=True, help="Apply DTI denoising."),
+        click.option("--participant-label", help="Subject ID to process (e.g. sub-01)."),
+        click.option("--session-label", help="Session ID to process (e.g. ses-01)."),
+        click.option("--t1-run", help="Specific T1 run string to match (e.g. r01)."),
+        click.option("--separator", default="+", help="Separator for filename components."),
+        click.option("--input-manifest/--no-input-manifest", default=True, help="Write input JSON manifest."),
+        click.option("--verbose/--no-verbose", default=False, help="Print detailed logs and show warnings.")
+    ]
+    for option in reversed(options):
+        f = option(f)
+    return f
 
+# --- Core Logic ---
 def run_study(
     bids_dir: str,
     output_dir: str,
@@ -46,27 +79,30 @@ def run_study(
     write_input_manifest: bool = True,
     verbose: bool = False,
 ) -> list[str]:
-    print(f"Parsing BIDS layout from: {bids_dir}")
+    setup_logging(verbose)
+    logging.info(f"Parsing BIDS layout from: {bids_dir}")
+    
     layout_df = parse_antsxbids_layout(bids_dir)
 
     if participant_label:
-        layout_df = layout_df[layout_df["subjectID"] == participant_label]
-        print(f"Filtering for subject: {participant_label}")
+        layout_df = layout_df[layout_df["subjectID"].astype(str) == str(participant_label)]
+        logging.info(f"Filtering for subject: {participant_label}")
 
     if session_label:
-        layout_df = layout_df[layout_df["date"] == session_label]
-        print(f"Filtering for session: {session_label}")
+        # Cast to string to avoid pandas type mismatch with numeric session IDs
+        layout_df = layout_df[layout_df["date"].astype(str) == str(session_label)]
+        logging.info(f"Filtering for session: {session_label}")
 
     if layout_df.empty:
-        print("No valid subjects/sessions found.")
+        logging.warning("No valid subjects/sessions found with provided filters.")
         return []
 
-    print(f"Found {len(layout_df)} unique sessions to process.")
+    logging.info(f"Found {len(layout_df)} unique sessions to process.")
     os.makedirs(output_dir, exist_ok=True)
 
     failures: list[str] = []
 
-    for _, row in tqdm(layout_df.iterrows(), total=layout_df.shape[0]):
+    for _, row in tqdm(layout_df.iterrows(), total=layout_df.shape[0], desc="Processing Sessions"):
         result = process_session(
             row,
             output_root=output_dir,
@@ -84,151 +120,82 @@ def run_study(
             failures.append(f"{row['subjectID']}_{row['date']}")
 
     if failures:
-        print(f"Finished with {len(failures)} errors: {failures}")
+        logging.error(f"Finished with {len(failures)} errors: {failures}")
     else:
-        print("Processing complete successfully.")
+        logging.info("Processing completed successfully.")
 
     return failures
 
-
-@click.group(
-    invoke_without_command=True,
-    context_settings=dict(ignore_unknown_options=True, allow_extra_args=True),
-)
-@click.option("--project", default="Project", help="Project ID string")
-@click.option(
-    "--dl-weights",
-    is_flag=True,
-    help="Force download of ANTsPyMM/T1w templates and weights",
-)
-@click.option("--denoise/--no-denoise", default=True, help="Apply DTI denoising")
-@click.option(
-    "--participant-label", help="Specific subject ID to process (e.g. sub-211239)"
-)
-@click.option("--session-label", help="Specific session ID to process (e.g. ses-20230405)")
-@click.option("--t1-run", help="Specific T1 run string to match (e.g. r0002)")
-@click.option(
-    "--separator",
-    default="+",
-    help="Character to separate filename components (default: +)",
-)
-@click.option(
-    "--input-manifest/--no-input-manifest",
-    default=True,
-    help="Write a per-session JSON listing exactly which NIfTI inputs will be processed",
-)
-@click.option(
-    "--verbose/--no-verbose",
-    default=False,
-    help="Print discovered files and selected inputs per session",
-)
+# --- CLI Implementation ---
+@click.group(context_settings=dict(help_option_names=['-h', '--help']))
 @click.version_option(__version__)
-@click.pass_context
-def main(
-    ctx: click.Context,
-    project: str,
-    dl_weights: bool,
-    denoise: bool,
-    participant_label: str | None,
-    session_label: str | None,
-    t1_run: str | None,
-    separator: str,
-    input_manifest: bool,
-    verbose: bool,
-) -> None:
-    """antsxmm CLI.
-
-    Commands:
-      - (default) run: antsxmm <BIDS_DIR> <OUTPUT_DIR> [options]
-      - tree: antsxmm tree <SUBJECT_DIR> [--create]
-      - validate: antsxmm validate <PROJECT_DIR> [--pymm-dir pymm/]
+def main():
     """
-    if ctx.invoked_subcommand is None:
-        if len(ctx.args) != 2:
-            raise click.UsageError("Expected: antsxmm <BIDS_DIR> <OUTPUT_DIR> [options]")
-        bids_dir, output_dir = ctx.args
-        _run_pipeline(
-            bids_dir=bids_dir,
-            output_dir=output_dir,
-            project=project,
-            dl_weights=dl_weights,
-            denoise=denoise,
-            participant_label=participant_label,
-            session_label=session_label,
-            t1_run=t1_run,
-            separator=separator,
-            input_manifest=input_manifest,
-            verbose=verbose,
-        )
+    🧠 ANTSXMM: Automated Multimodal Neuroimaging Pipeline.
 
+    A streamlined wrapper for ANTsPyMM designed for ANTSXBIDS layouts.
+    """
+    pass
 
-@main.command("run")
+@main.command("run", short_help="Run the processing pipeline.")
 @click.argument("bids_dir", type=click.Path(exists=True))
 @click.argument("output_dir", type=click.Path())
-@click.pass_context
-def run_cmd(ctx: click.Context, bids_dir: str, output_dir: str) -> None:
-    """Run the antsxmm pipeline (explicit command form)."""
-    params = ctx.parent.params if ctx.parent else {}
-    _run_pipeline(bids_dir=bids_dir, output_dir=output_dir, **params)
+@pipeline_options
+def run_cmd(bids_dir, output_dir, **kwargs):
+    """
+    🚀 Run the full processing pipeline on a BIDS directory.
+    
+    BIDS_DIR: Path to the root of your BIDS dataset.\n
+    OUTPUT_DIR: Path to save processed 'pymm' results.
+    """
+    _run_pipeline_logic(bids_dir, output_dir, **kwargs)
 
-
-@main.command("tree")
+@main.command("tree", short_help="Visualize output directory structure.")
 @click.argument("path", type=click.Path(exists=True))
-@click.option("--create", is_flag=True, help="Create predicted directory structure")
+@click.option("--create", is_flag=True, help="Actually create the predicted directory structure.")
 def tree_cmd(path: str, create: bool) -> None:
+    """🌲 Predict and visualize the output directory tree for a subject."""
     from pathlib import Path as _Path
-    from .tree import predict_tree
+    try:
+        from .tree import predict_tree
+    except ImportError:
+        from antsxmm.tree import predict_tree
 
     project, subject, tree = predict_tree(path)
 
-    print("pymm/")
-    print(f"  {project}/")
-    print(f"    {subject}/")
-
+    click.secho(f"Project: {project} | Subject: {subject}", fg="cyan", bold=True)
     for ses, runs in tree.items():
-        print(f"      {ses}/")
-
+        print(f"  {ses}/")
         seen: set[tuple[str, str]] = set()
-
         for modality, run in runs:
-            if (modality, run) in seen:
-                continue
+            if (modality, run) in seen: continue
             seen.add((modality, run))
-
-            print(f"        {modality}/")
-            print(f"          {run}/")
-
+            print(f"    {modality}/")
+            print(f"      {run}/")
             if create:
                 d = _Path("pymm") / project / subject / ses / modality / run
                 d.mkdir(parents=True, exist_ok=True)
 
-
-@main.command("validate")
+@main.command("validate", short_help="Check processed outputs.")
 @click.argument("path", type=click.Path(exists=True))
-@click.option("--pymm-dir", default="pymm", help="Path to pymm output root")
+@click.option("--pymm-dir", default="pymm", help="Path to pymm output root.")
 def validate_cmd(path: str, pymm_dir: str) -> None:
-    from .validate import validate_project
+    """✅ Validate processed outputs against expected structure and files."""
+    try:
+        from .validate import validate_project
+    except ImportError:
+        from antsxmm.validate import validate_project
 
     results = validate_project(path, pymm_dir=pymm_dir)
     for session_key, res in results.items():
-        print(f"Session: {session_key}")
-
+        click.secho(f"Session: {session_key}", bold=True)
         if res.missing:
-            print("Missing:")
-            for m in res.missing:
-                print(f"  {m}")
-        if res.unexpected:
-            print("Unexpected:")
-            for u in res.unexpected:
-                print(f"  {u}")
+            click.secho(f"  Missing: {len(res.missing)} files", fg="red")
         if res.ok:
-            print("OK:")
-            for o in res.ok:
-                print(f"  {o}")
+            click.secho(f"  OK: {len(res.ok)} files", fg="green")
         print("")
 
-
-def _run_pipeline(
+def _run_pipeline_logic(
     bids_dir: str,
     output_dir: str,
     project: str,
@@ -241,16 +208,15 @@ def _run_pipeline(
     input_manifest: bool,
     verbose: bool,
 ) -> None:
-    """ANTSXMM: Streamlined ANTsPyMM wrapper for ANTSXBIDS output."""
-
-    print(f"antsxmm {__version__}")
+    """Internal logic to bridge CLI and execution."""
+    setup_logging(verbose)
+    logging.info(f"antsxmm version {__version__}")
 
     if dl_weights:
         if not hasattr(antspyt1w, "get_data") or not hasattr(antspymm, "get_data"):
-            raise ModuleNotFoundError(
-                "--dl-weights requires antspyt1w and antspymm to be installed."
-            )
-        print("Downloading templates and weights...")
+            logging.error("--dl-weights requires antspyt1w and antspymm to be installed.")
+            sys.exit(1)
+        logging.info("Downloading templates and weights (this may take a while)...")
         antspyt1w.get_data(force_download=True)
         antspymm.get_data(force_download=True)
 
@@ -270,8 +236,14 @@ def _run_pipeline(
     if failures:
         sys.exit(1)
 
-
-
-
-if __name__ == "__main__":  # pragma: no cover
+def entry_point():
+    """Allows calling 'antsxmm BIDS OUT' without the 'run' keyword."""
+    if len(sys.argv) > 1:
+        arg1 = sys.argv[1]
+        # If first arg is not a command, not a help flag, and looks like a path/string
+        if arg1 not in main.commands and arg1 not in ['-h', '--help', '--version']:
+            sys.argv.insert(1, 'run')
     main()
+
+if __name__ == "__main__":
+    entry_point()
