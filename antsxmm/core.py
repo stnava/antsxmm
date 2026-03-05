@@ -93,70 +93,7 @@ def _merge_tree(src: Path, dst: Path) -> None:
         pass
 
 
-def _normalize_session_output_tree(
-    session_out: Path, *, project_id: str, subject_id: str, date_id: str
-) -> None:
-    """Normalize output layout to <modality>/<run-id>/ and canonical filename prefixes.
 
-    Handles two common antspymm output quirks:
-      1) modality/<full-stem-containing-run>/ instead of modality/run-XXX/
-      2) modality/run-XXX plus an extra modality/<full-stem-containing-run>/ (merge)
-    Also rewrites the '+'-delimited filename prefix run segment to run-XXX.
-    """
-    if not session_out.exists():
-        return
-
-    for modality_dir in [p for p in session_out.iterdir() if p.is_dir()]:
-        modality = modality_dir.name
-        # Determine candidate run id from directory names or files
-        run_id = _extract_run_id(modality_dir.name)
-        child_dirs = [d for d in modality_dir.iterdir() if d.is_dir()]
-        # If there's a canonical run dir, prefer it
-        canonical_run_dir = None
-        for d in child_dirs:
-            rid = _extract_run_id(d.name)
-            if rid and d.name == rid:
-                canonical_run_dir = d
-                run_id = rid
-                break
-
-        # If no canonical run dir and exactly one child dir, rename it
-        if canonical_run_dir is None and len(child_dirs) == 1:
-            only = child_dirs[0]
-            rid = _extract_run_id(only.name)
-            if rid:
-                run_id = rid
-                canonical_run_dir = modality_dir / rid
-                if only != canonical_run_dir:
-                    only.rename(canonical_run_dir)
-            else:
-                canonical_run_dir = only
-
-        # If we have a run_id but no canonical run dir yet, create one if needed
-        if run_id and canonical_run_dir is None:
-            canonical_run_dir = modality_dir / run_id
-            canonical_run_dir.mkdir(exist_ok=True)
-
-        # Refresh child directory listing after any renames/creates
-        child_dirs = [d for d in modality_dir.iterdir() if d.is_dir()]
-
-        # Merge any extra dirs that contain the same run id into canonical
-        if run_id and canonical_run_dir is not None:
-            for d in child_dirs:
-                if d == canonical_run_dir:
-                    continue
-                if _extract_run_id(d.name) == run_id:
-                    _merge_tree(d, canonical_run_dir)
-
-            # Rewrite filename prefix run segment in canonical
-            _rename_prefix_run_segment(
-                canonical_run_dir,
-                project_id=project_id,
-                subject_id=subject_id,
-                date_id=date_id,
-                modality=modality,
-                run_id=run_id,
-            )
 def _is_nifti(path: str) -> bool:
     if not path:
         return False
