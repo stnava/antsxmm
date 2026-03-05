@@ -7,7 +7,8 @@ name = "antsxmm"
 dynamic = ["version"]
 description = "A streamlined wrapper for ANTsPyMM tailored for antsxbids BIDS output"
 readme = "README.md"
-requires-python = ">=3.9"
+# Codebase uses Python 3.10+ syntax (e.g. PEP 604 unions like `str | None`).
+requires-python = ">=3.10"
 authors = [
     {name = "ANTsX Community"}
 ]
@@ -18,7 +19,6 @@ dependencies = [
     "tqdm",
     "click",
     "antspyx",
-    "importlib-metadata; python_version<'3.8'"
 ]
 
 [project.optional-dependencies]

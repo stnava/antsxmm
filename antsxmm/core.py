@@ -645,10 +645,9 @@ def process_session(
     image_uid = extract_image_id(t1_fn)
 
     # 3. Setup Staging Area
-    staging_root = os.path.join(tempfile.gettempdir(), "antsxmm_staging_{}_{}".format(sub_id, date_id))
-    if os.path.exists(staging_root):
-        shutil.rmtree(staging_root)
-    os.makedirs(staging_root, exist_ok=True)
+    # Use a randomized directory under the system temp dir to avoid collisions and
+    # to reduce the risk of symlink tricks in shared environments.
+    staging_root = tempfile.mkdtemp(prefix=f"antsxmm_staging_{sub_id}_{date_id}_")
 
     # 4. Stage Files
     # T1w
