@@ -58,5 +58,5 @@ def test_pipeline_failures(tmp_path, capsys):
         mock_proc.return_value = {'success': False}
         
         run_study("bids", "out", "proj")
-        captured = capsys.readouterr()
-        assert "Finished with 1 errors" in captured.err
+        out = capsys.readouterr().out
+        assert "Finished with 1 errors" in out

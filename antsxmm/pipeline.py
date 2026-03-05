@@ -3,6 +3,8 @@ import sys
 import types
 import logging
 import warnings
+import json
+from pathlib import Path
 
 import click
 import pandas as pd
@@ -37,12 +39,12 @@ except ModuleNotFoundError:
 try:
     from ._version import version as __version__
     from .bids import parse_antsxbids_layout
-    from .core import process_session
+    from .core import process_session, compute_input_fingerprint
 except ImportError:
     # Fallback for local development/non-installed runs
     try:
         from antsxmm.bids import parse_antsxbids_layout
-        from antsxmm.core import process_session
+        from antsxmm.core import process_session, compute_input_fingerprint
         from importlib.metadata import version
         __version__ = version("antsxmm")
     except Exception:
@@ -60,6 +62,10 @@ def pipeline_options(f):
         click.option("--t1-run", help="Specific T1 run string to match (e.g. r01)."),
         click.option("--separator", default="+", help="Separator for filename components."),
         click.option("--input-manifest/--no-input-manifest", default=True, help="Write input JSON manifest."),
+        click.option("--resume/--no-resume", default=True, help="Skip sessions already complete and unchanged."),
+        click.option("--force", is_flag=True, help="Re-run sessions even if already complete."),
+        click.option("--rerun-failed", is_flag=True, help="Only run sessions that previously failed (or have no status)."),
+        click.option("--dry-run", is_flag=True, help="Print the execution plan without running processing."),
         click.option("--verbose/--no-verbose", default=False, help="Print detailed logs and show warnings.")
     ]
     for option in reversed(options):
@@ -77,6 +83,10 @@ def run_study(
     separator: str = "+",
     t1_run: str | None = None,
     write_input_manifest: bool = True,
+    resume: bool = True,
+    force: bool = False,
+    rerun_failed: bool = False,
+    dry_run: bool = False,
     verbose: bool = False,
 ) -> list[str]:
     setup_logging(verbose)
@@ -98,13 +108,74 @@ def run_study(
         return []
 
     logging.info(f"Found {len(layout_df)} unique sessions to process.")
-    os.makedirs(output_dir, exist_ok=True)
-
+    logging.info(f"Found {len(layout_df)} unique sessions to process.")
+    if not dry_run:
+        os.makedirs(output_dir, exist_ok=True)
     failures: list[str] = []
 
+    def _status_path_for(sub: str, ses: str) -> Path:
+        return Path(output_dir) / project / sub / ses / '.antsxmm_status.json'
+
+    def _load_status(p: Path) -> dict | None:
+        try:
+            if p.exists():
+                return json.loads(p.read_text(encoding='utf-8'))
+        except Exception:
+            return None
+        return None
+
+    planned = 0
+    skipped = 0
+    to_run = 0
+
     for _, row in tqdm(layout_df.iterrows(), total=layout_df.shape[0], desc="Processing Sessions"):
+        row_dict = row.to_dict()
+        sub = str(row_dict.get('subjectID'))
+        ses = str(row_dict.get('date'))
+
+        # Decide if we should run this session
+        status_path = _status_path_for(sub, ses)
+        status = _load_status(status_path)
+
+        fingerprint = compute_input_fingerprint(row_dict, t1_run_match=t1_run)
+
+        should_run = True
+        reason = 'run'
+
+        if force:
+            should_run = True
+            reason = 'force'
+        elif rerun_failed:
+            if status is None:
+                should_run = True
+                reason = 'no_status'
+            else:
+                should_run = not bool(status.get('success', False))
+                reason = 'rerun_failed' if should_run else 'already_success'
+        elif resume and status is not None and bool(status.get('success', False)):
+            prev = status.get('input_fingerprint', {}) or {}
+            if prev.get('hash') and fingerprint.get('hash') and prev.get('hash') == fingerprint.get('hash'):
+                should_run = False
+                reason = 'resume_skip'
+            else:
+                should_run = True
+                reason = 'inputs_changed'
+
+        planned += 1
+        if should_run:
+            to_run += 1
+        else:
+            skipped += 1
+
+        if dry_run:
+            click.echo(f"PLAN {sub}_{ses}: {'RUN' if should_run else 'SKIP'} ({reason})")
+            continue
+
+        if not should_run:
+            continue
+
         result = process_session(
-            row,
+            row_dict,
             output_root=output_dir,
             project_id=project,
             denoise_dti=denoise_dti,
@@ -114,12 +185,26 @@ def run_study(
             t1_run_match=t1_run,
             write_input_manifest=write_input_manifest,
             verbose=verbose,
+            tool_version=__version__,
+            resume_mode=(
+                'force' if force else
+                'rerun_failed' if rerun_failed else
+                'resume' if resume else
+                'no_resume'
+            ),
         )
 
         if not result.get("success", False):
-            failures.append(f"{row['subjectID']}_{row['date']}")
+            failures.append(f"{sub}_{ses}")
+
+    if dry_run:
+        click.echo(f"Plan summary: sessions={planned} run={to_run} skip={skipped}")
+        return []
 
     if failures:
+        # Keep a human-readable summary on stdout for library use and for tests.
+        # (Logging may be redirected or suppressed by callers.)
+        print(f"Finished with {len(failures)} errors")
         logging.error(f"Finished with {len(failures)} errors: {failures}")
     else:
         logging.info("Processing completed successfully.")
@@ -164,14 +249,18 @@ def tree_cmd(path: str, create: bool) -> None:
     project, subject, tree = predict_tree(path)
 
     click.secho(f"Project: {project} | Subject: {subject}", fg="cyan", bold=True)
+    # Print a concrete, copy-pastable path layout rooted at the default output dir.
+    print("pymm/")
+    print(f"  {project}/")
+    print(f"    {subject}/")
     for ses, runs in tree.items():
-        print(f"  {ses}/")
+        print(f"      {ses}/")
         seen: set[tuple[str, str]] = set()
         for modality, run in runs:
             if (modality, run) in seen: continue
             seen.add((modality, run))
-            print(f"    {modality}/")
-            print(f"      {run}/")
+            print(f"        {modality}/")
+            print(f"          {run}/")
             if create:
                 d = _Path("pymm") / project / subject / ses / modality / run
                 d.mkdir(parents=True, exist_ok=True)
@@ -206,6 +295,10 @@ def _run_pipeline_logic(
     t1_run: str | None,
     separator: str,
     input_manifest: bool,
+    resume: bool,
+    force: bool,
+    rerun_failed: bool,
+    dry_run: bool,
     verbose: bool,
 ) -> None:
     """Internal logic to bridge CLI and execution."""
@@ -230,6 +323,10 @@ def _run_pipeline_logic(
         separator=separator,
         t1_run=t1_run,
         write_input_manifest=input_manifest,
+        resume=resume,
+        force=force,
+        rerun_failed=rerun_failed,
+        dry_run=dry_run,
         verbose=verbose,
     )
 
