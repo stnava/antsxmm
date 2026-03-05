@@ -91,9 +91,10 @@ def run_study(
     return failures
 
 
-@click.command()
-@click.argument("bids_dir", type=click.Path(exists=True))
-@click.argument("output_dir", type=click.Path())
+@click.group(
+    invoke_without_command=True,
+    context_settings=dict(ignore_unknown_options=True, allow_extra_args=True),
+)
 @click.option("--project", default="Project", help="Project ID string")
 @click.option(
     "--dl-weights",
@@ -122,7 +123,112 @@ def run_study(
     help="Print discovered files and selected inputs per session",
 )
 @click.version_option(__version__)
+@click.pass_context
 def main(
+    ctx: click.Context,
+    project: str,
+    dl_weights: bool,
+    denoise: bool,
+    participant_label: str | None,
+    session_label: str | None,
+    t1_run: str | None,
+    separator: str,
+    input_manifest: bool,
+    verbose: bool,
+) -> None:
+    """antsxmm CLI.
+
+    Commands:
+      - (default) run: antsxmm <BIDS_DIR> <OUTPUT_DIR> [options]
+      - tree: antsxmm tree <SUBJECT_DIR> [--create]
+      - validate: antsxmm validate <PROJECT_DIR> [--pymm-dir pymm/]
+    """
+    if ctx.invoked_subcommand is None:
+        if len(ctx.args) != 2:
+            raise click.UsageError("Expected: antsxmm <BIDS_DIR> <OUTPUT_DIR> [options]")
+        bids_dir, output_dir = ctx.args
+        _run_pipeline(
+            bids_dir=bids_dir,
+            output_dir=output_dir,
+            project=project,
+            dl_weights=dl_weights,
+            denoise=denoise,
+            participant_label=participant_label,
+            session_label=session_label,
+            t1_run=t1_run,
+            separator=separator,
+            input_manifest=input_manifest,
+            verbose=verbose,
+        )
+
+
+@main.command("run")
+@click.argument("bids_dir", type=click.Path(exists=True))
+@click.argument("output_dir", type=click.Path())
+@click.pass_context
+def run_cmd(ctx: click.Context, bids_dir: str, output_dir: str) -> None:
+    """Run the antsxmm pipeline (explicit command form)."""
+    params = ctx.parent.params if ctx.parent else {}
+    _run_pipeline(bids_dir=bids_dir, output_dir=output_dir, **params)
+
+
+@main.command("tree")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--create", is_flag=True, help="Create predicted directory structure")
+def tree_cmd(path: str, create: bool) -> None:
+    from pathlib import Path as _Path
+    from .tree import predict_tree
+
+    project, subject, tree = predict_tree(path)
+
+    print("pymm/")
+    print(f"  {project}/")
+    print(f"    {subject}/")
+
+    for ses, runs in tree.items():
+        print(f"      {ses}/")
+
+        seen: set[tuple[str, str]] = set()
+
+        for modality, run in runs:
+            if (modality, run) in seen:
+                continue
+            seen.add((modality, run))
+
+            print(f"        {modality}/")
+            print(f"          {run}/")
+
+            if create:
+                d = _Path("pymm") / project / subject / ses / modality / run
+                d.mkdir(parents=True, exist_ok=True)
+
+
+@main.command("validate")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--pymm-dir", default="pymm", help="Path to pymm output root")
+def validate_cmd(path: str, pymm_dir: str) -> None:
+    from .validate import validate_project
+
+    results = validate_project(path, pymm_dir=pymm_dir)
+    for session_key, res in results.items():
+        print(f"Session: {session_key}")
+
+        if res.missing:
+            print("Missing:")
+            for m in res.missing:
+                print(f"  {m}")
+        if res.unexpected:
+            print("Unexpected:")
+            for u in res.unexpected:
+                print(f"  {u}")
+        if res.ok:
+            print("OK:")
+            for o in res.ok:
+                print(f"  {o}")
+        print("")
+
+
+def _run_pipeline(
     bids_dir: str,
     output_dir: str,
     project: str,
@@ -163,6 +269,8 @@ def main(
 
     if failures:
         sys.exit(1)
+
+
 
 
 if __name__ == "__main__":  # pragma: no cover

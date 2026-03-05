@@ -20,6 +20,26 @@ import json
 from pathlib import Path
 
 
+def _extract_run_id_from_filename(path: str) -> str:
+    """
+    Extract BIDS run identifier from filename.
+    Default to run-01 if missing.
+    """
+    name = Path(path).name
+
+    m = re.search(r"run-(\d+)", name)
+    if m:
+        return f"run-{int(m.group(1)):02d}"
+
+    # Legacy: r0002-style tokens (not strictly BIDS) are common in older exports.
+    m = re.search(r"(?:^|_)(?:r)(\d+)(?:[_.]|$)", name)
+    if m:
+        return f"run-{int(m.group(1)):02d}"
+
+    return "run-01"
+
+
+
 
 def _extract_run_id(text: str) -> str | None:
     if not text:
@@ -245,14 +265,23 @@ def _write_json(path: str, obj) -> None:
 
 def extract_image_id(filename):
     """
-    Extracts a run/image ID from a BIDS-like filename.
-    Prioritizes 'rXXXX' or 'run-XXXX'. Defaults to '000'.
+    Backwards-compatible helper for extracting an image/run ID from a BIDS-like filename.
+
+    Canonical form is run-XX (e.g. run-01). Defaults to run-01 if missing.
+    Also accepts legacy patterns like r0002 and maps them to run-02 when possible.
     """
     fname = os.path.basename(filename)
-    match = re.search(r"_(r\d+|run-\d+)[_.]", fname)
-    if match:
-        return match.group(1)
-    return "000"
+
+    m = re.search(r"run-(\d+)", fname)
+    if m:
+        return f"run-{int(m.group(1)):02d}"
+
+    m = re.search(r"_(?:r)(\d+)[_.]", fname)
+    if m:
+        # r0002 -> run-02 (best-effort)
+        return f"run-{int(m.group(1)):02d}"
+
+    return "run-01"
 
 def get_modality_variant(filename, base_modality, sep):
     """
@@ -642,7 +671,7 @@ def process_session(
             else:
                 if verbose: print("Warning: No T1 matched '{}'. Using default: {}".format(t1_run_match, os.path.basename(t1_fn)))
 
-    image_uid = extract_image_id(t1_fn)
+    image_uid = _extract_run_id_from_filename(t1_fn)
 
     # 3. Setup Staging Area
     # Use a randomized directory under the system temp dir to avoid collisions and
@@ -687,7 +716,6 @@ def process_session(
     rsf_selected_raw = []
     for f in rsf_raw:
         this_id = extract_image_id(f)
-        if this_id == "000": this_id = image_uid
         
         path, mod, unique_id = sanitize_and_stage_file(f, project_id, sub_id, date_id, "rsfMRI", this_id, separator, staging_root, verbose)
         if path:
@@ -712,7 +740,6 @@ def process_session(
     dti_selected_raw = []
     for f in dti_raw:
         this_id = extract_image_id(f)
-        if this_id == "000": this_id = image_uid
         path, mod, unique_id = sanitize_and_stage_file(f, project_id, sub_id, date_id, "DTI", this_id, separator, staging_root, verbose)
         if path:
             dti_infos.append((path, mod, unique_id))
@@ -735,7 +762,6 @@ def process_session(
     nm_selected_raw = []
     for f in nm_raw:
         rid = extract_image_id(f)
-        if rid == "000": rid = image_uid
         path, mod, unique_id = sanitize_and_stage_file(f, project_id, sub_id, date_id, "NM2DMT", rid, separator, staging_root, verbose=verbose)
         if path:
             nm_infos.append((path, mod, unique_id))
@@ -944,15 +970,21 @@ def process_session(
 
         # Normalize antspymm output layout and filename prefixes to stable run-id form
         session_out = Path(output_root) / project_id / sub_id / date_id
-        _normalize_session_output_tree(
-            session_out,
-            project_id=project_id,
-            subject_id=sub_id,
-            date_id=date_id,
-        )
 
         result['success'] = True
         result['session_dir'] = os.path.join(output_root, project_id, sub_id, date_id)
+
+        # Persist cleaned study CSV for provenance/debugging
+        try:
+            os.makedirs(result['session_dir'], exist_ok=True)
+            study_csv_path = os.path.join(
+                result['session_dir'],
+                f"{project_id}+{sub_id}+{date_id}+study.csv",
+            )
+            study_csv_clean.to_csv(study_csv_path, index=False)
+        except Exception:
+            # Never fail the pipeline due to artifact persistence
+            pass
 
         if build_wide_table:
             session_output_dir = result['session_dir']
