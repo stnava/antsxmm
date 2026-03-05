@@ -27,6 +27,23 @@ def _is_nifti(path: str) -> bool:
     return p.endswith('.nii') or p.endswith('.nii.gz')
 
 
+def _resolve_realpath(p: str, *, base: str | None = None) -> str:
+    """Resolve a path to a stable absolute realpath.
+
+    BIDS parsers sometimes yield relative paths. We normalize everything to absolute
+    realpaths so that manifest comparisons (discovered vs used vs excluded) are consistent.
+    """
+    if not p:
+        return p
+    s = str(p)
+    if base and not os.path.isabs(s):
+        # Only use base when the relative path is intended to be relative to a session root.
+        # If the path already includes a root like 'BIDS/...', joining would duplicate segments.
+        if not (s.startswith('BIDS' + os.sep) or s.startswith('BIDS/')):
+            s = os.path.join(base, s)
+    return os.path.realpath(s)
+
+
 
 def _as_path_list(value) -> list[str]:
     """Normalize a possibly-missing BIDS field into a list of path strings.
@@ -70,33 +87,79 @@ def _as_path_list(value) -> list[str]:
 
 
 def _collect_discovered_inputs(session_data):
-    """Collect discovered inputs from a BIDS session row, robust to NaN fields."""
-    def _norm(p: str) -> str:
-        # Normalize to an absolute, canonical path.
-        # This prevents downstream manifest logic from mixing relative and absolute forms.
-        return os.path.realpath(p)
+    """Collect discovered inputs from a BIDS session row, robust to NaN fields.
 
-    def _collect(key: str) -> list[str]:
+    All paths are normalized to absolute realpaths to keep manifest accounting stable.
+    """
+    base = session_data.get('session_path')
+    def _norm_list(key: str) -> list[str]:
         out: list[str] = []
-        for p in _as_path_list(session_data.get(key)):
-            if not _is_nifti(p):
+        for raw in _as_path_list(session_data.get(key)):
+            if not _is_nifti(raw):
                 continue
-            if not os.path.exists(p):
-                continue
-            out.append(_norm(p))
+            rp = _resolve_realpath(raw, base=base)
+            if os.path.exists(rp):
+                out.append(rp)
         return out
 
-    return {
-        't1_filenames': _collect('t1_filenames'),
-        'flair_filenames': _collect('flair_filenames'),
-        't2w_filenames': _collect('t2w_filenames'),
-        'dti_filenames': _collect('dti_filenames'),
-        'rsf_filenames': _collect('rsf_filenames'),
-        'nm_filenames': _collect('nm_filenames'),
-        'perf_filenames': _collect('perf_filenames'),
-        'pet3d_filenames': _collect('pet3d_filenames'),
+    discovered = {
+        't1_filenames': _norm_list('t1_filenames'),
+        'flair_filenames': _norm_list('flair_filenames'),
+        't2w_filenames': _norm_list('t2w_filenames'),
+        'dti_filenames': _norm_list('dti_filenames'),
+        'rsf_filenames': _norm_list('rsf_filenames'),
+        'nm_filenames': _norm_list('nm_filenames'),
+        'perf_filenames': _norm_list('perf_filenames'),
+        'pet3d_filenames': _norm_list('pet3d_filenames'),
     }
 
+    # If the parser did not populate perf_filenames, attempt to discover ASL NIfTIs.
+    if not discovered['perf_filenames']:
+        discovered['perf_filenames'] = _discover_perf_from_asl(base)
+
+    return discovered
+
+
+
+def _discover_perf_from_asl(session_path: str | None) -> list[str]:
+    """Best-effort perfusion discovery for BIDS variants.
+
+    Some datasets store ASL NIfTIs under an 'asl/' directory rather than 'perf/'.
+    Downstream processing treats ASL as perfusion, so we map both layouts to perf_filenames.
+    """
+    if not session_path:
+        return []
+    root = os.fspath(session_path)
+    if not os.path.isdir(root):
+        return []
+
+    import glob
+
+    patterns = [
+        os.path.join(root, "perf", "*asl*.nii*"),
+        os.path.join(root, "asl", "*asl*.nii*"),
+        os.path.join(root, "perf", "*_asl.nii*"),
+        os.path.join(root, "asl", "*_asl.nii*"),
+    ]
+
+    candidates: list[str] = []
+    for pat in patterns:
+        for p in glob.glob(pat):
+            if not _is_nifti(p):
+                continue
+            rp = os.path.realpath(p)
+            if os.path.exists(rp):
+                candidates.append(rp)
+
+    # De-dup while preserving a stable order.
+    seen: set[str] = set()
+    out: list[str] = []
+    for p in sorted(candidates):
+        if p in seen:
+            continue
+        seen.add(p)
+        out.append(p)
+    return out
 
 def _ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
@@ -607,8 +670,11 @@ def process_session(
     if not isinstance(perf_raw, (str, os.PathLike)):
         perf_raw = None
     if not perf_raw:
-        perf_list = _as_path_list(session_data.get('perf_filenames'))
-        perf_raw = perf_list[0] if perf_list else None
+            perf_list = _as_path_list(session_data.get('perf_filenames'))
+            if not perf_list:
+                # Fall back to BIDS variants that store ASL under 'asl/' instead of 'perf/'.
+                perf_list = _discover_perf_from_asl(session_data.get('session_path'))
+            perf_raw = perf_list[0] if perf_list else None
     perf_path, perf_mod, perf_id = sanitize_and_stage_file(
         perf_raw, project_id, sub_id, date_id, "perf", image_uid, separator, staging_root, verbose=verbose
     )
@@ -638,21 +704,15 @@ def process_session(
         # Discoveries (as seen from the BIDS parser row)
         discovered = _collect_discovered_inputs(session_data)
 
-        def _rp(p: str | None):
-            if not p:
-                return None
-            if not isinstance(p, (str, os.PathLike)):
-                return None
-            return os.path.realpath(str(p))
-
+        base = session_data.get('session_path')
         used = {
-            't1_filename': _rp(t1_fn),
-            'flair_or_t2_as_flair_filename': _rp(flair_raw),
-            'rsf_filenames': [os.path.realpath(p) for p in rsf_paths],
-            'dti_filenames': [os.path.realpath(p) for p in dti_paths],
-            'nm_filenames': [os.path.realpath(p) for p in nm_paths],
-            'perf_filename': _rp(perf_raw),
-            'pet3d_filename': _rp(pet_raw),
+            't1_filename': _resolve_realpath(t1_fn, base=base) if t1_fn else None,
+            'flair_or_t2_as_flair_filename': _resolve_realpath(flair_raw, base=base) if flair_raw else None,
+            'rsf_filenames': [_resolve_realpath(p, base=base) for p in rsf_paths],
+            'dti_filenames': [_resolve_realpath(p, base=base) for p in dti_paths],
+            'nm_filenames': [_resolve_realpath(p, base=base) for p in nm_paths],
+            'perf_filename': _resolve_realpath(perf_raw, base=base) if perf_raw else None,
+            'pet3d_filename': _resolve_realpath(pet_raw, base=base) if pet_raw else None,
         }
 
         if verbose:
@@ -664,19 +724,19 @@ def process_session(
                 print(f"  - {k}: {v}")
 
         # Exclusions due to truncation / selection.
-        used_rsf = set(used['rsf_filenames'])
-        used_dti = set(used['dti_filenames'])
-        used_t1 = used['t1_filename']
-        used_flair = used['flair_or_t2_as_flair_filename']
+        rsf_used = set(used.get('rsf_filenames', []))
+        dti_used = set(used.get('dti_filenames', []))
+        t1_used = used.get('t1_filename')
+        flair_used = used.get('flair_or_t2_as_flair_filename')
 
         excluded = {
-            'rsf_truncated': [p for p in discovered.get('rsf_filenames', []) if p not in used_rsf],
-            'dti_truncated': [p for p in discovered.get('dti_filenames', []) if p not in used_dti],
-            't1_not_selected': [p for p in discovered.get('t1_filenames', []) if used_t1 and p != used_t1],
+            'rsf_truncated': [p for p in discovered.get('rsf_filenames', []) if p not in rsf_used],
+            'dti_truncated': [p for p in discovered.get('dti_filenames', []) if p not in dti_used],
+            't1_not_selected': [p for p in discovered.get('t1_filenames', []) if t1_used and p != t1_used],
             'flair_candidates_not_selected': [
                 p
                 for p in (discovered.get('flair_filenames', []) + discovered.get('t2w_filenames', []))
-                if used_flair and p != used_flair
+                if flair_used and p != flair_used
             ],
         }
 
@@ -685,7 +745,7 @@ def process_session(
             'project_id': project_id,
             'subjectID': sub_id,
             'sessionID': date_id,
-            'session_path': session_data.get('session_path'),
+            'session_path': _resolve_realpath(session_data.get('session_path') or ''),
             'selection_rules': {
                 'requires_T1w': True,
                 't1_run_match': t1_run_match,
@@ -700,10 +760,10 @@ def process_session(
             'discovered': discovered,
             'used_inputs': used,
             'nifti_inputs_that_will_be_processed': sorted(
-                [os.path.realpath(p) for p in [t1_fn, flair_raw, perf_raw, pet_raw] if p] +
-                [os.path.realpath(p) for p in rsf_paths] +
-                [os.path.realpath(p) for p in dti_paths] +
-                [os.path.realpath(p) for p in nm_paths]
+                [p for p in [used.get('t1_filename'), used.get('flair_or_t2_as_flair_filename'), used.get('perf_filename'), used.get('pet3d_filename')] if p]
+                + list(used.get('rsf_filenames', []))
+                + list(used.get('dti_filenames', []))
+                + list(used.get('nm_filenames', []))
             ),
             'excluded': excluded,
         }
