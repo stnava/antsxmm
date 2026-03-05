@@ -17,10 +17,13 @@ zip -r ~/Downloads/antsxmmclean.zip . \
      ".ruff_cache/*" \
      "**/.ruff_cache/*" \
      ".tox/*" \
+     ".out" \
      ".venv/*" \
      "venv/*" \
      "env/*" \
      ".env" \
+     "docs/BIDS_ANTsPyMM_Seamless_Automation.pdf" \
+     "build/*"\
      ".DS_Store" \
      "**/.DS_Store" \
      ".git/*"
