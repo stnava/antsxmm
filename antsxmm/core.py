@@ -165,6 +165,64 @@ def _ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
 
 
+def _extract_run_id_from_name(name: str) -> str | None:
+    """Extract a canonical run identifier (e.g. 'run-001' or 'r0001') from a name."""
+    m = re.search(r"(?:^|[_+.-])(run-\d+|r\d+)(?:$|[_+.-])", name)
+    return m.group(1) if m else None
+
+
+def _normalize_modality_output_run_dirs(
+    session_out_dir: str,
+    modality: str,
+    expected_run_ids: set[str],
+    *,
+    verbose: bool = False,
+) -> None:
+    """Normalize non-T1 modality output directories to be keyed by run-id.
+
+    Some antspymm pipelines emit output directories named after the full input stem
+    (e.g. 'sub-XXX_ses-01_T2Flair_run-001') instead of just 'run-001'.
+
+    We normalize those directories post-hoc to a stable '<modality>/<run-id>/' layout.
+    The normalization is conservative:
+      - If a canonical run-id directory already exists, we do nothing.
+      - If there are multiple candidate subdirs, we only rename those that contain a run-id
+        and do not collide with an existing canonical dir.
+      - If expected_run_ids is empty, we do nothing.
+    """
+    if not session_out_dir or not modality or not expected_run_ids:
+        return
+    mod_dir = os.path.join(session_out_dir, modality)
+    if not os.path.isdir(mod_dir):
+        return
+
+    # If any canonical run directory exists already, prefer leaving things alone.
+    for rid in expected_run_ids:
+        if os.path.isdir(os.path.join(mod_dir, rid)):
+            return
+
+    subdirs = [d for d in os.listdir(mod_dir) if os.path.isdir(os.path.join(mod_dir, d))]
+    if not subdirs:
+        return
+
+    for d in subdirs:
+        rid = _extract_run_id_from_name(d)
+        if not rid:
+            continue
+        if rid not in expected_run_ids:
+            continue
+        src = os.path.join(mod_dir, d)
+        dst = os.path.join(mod_dir, rid)
+        if os.path.abspath(src) == os.path.abspath(dst):
+            continue
+        if os.path.exists(dst):
+            # Avoid collisions; keep the original in place.
+            continue
+        if verbose:
+            print(f"[INFO] Normalizing output dir: {src} -> {dst}")
+        shutil.move(src, dst)
+
+
 def _write_json(path: str, obj) -> None:
     tmp = path + ".tmp"
     with open(tmp, 'w', encoding='utf-8') as f:
@@ -841,6 +899,21 @@ def process_session(
             normalization_template_spacing=[1,1,1],
             srmodel_T1=None, srmodel_NM=None, srmodel_DTI=None
         )
+
+        # Normalize output run directories for non-T1 modalities.
+        session_dir = os.path.join(output_root, project_id, sub_id, date_id)
+        try:
+            flair_run_ids = {flair_id} if flair_id else set()
+            pet_run_ids = {pet_id} if pet_id else set()
+            perf_run_ids = {perf_id} if perf_id else set()
+            # Only normalize the modalities where the run-dir is expected to be a direct child.
+            _normalize_modality_output_run_dirs(session_dir, 'T2Flair', flair_run_ids, verbose=verbose)
+            _normalize_modality_output_run_dirs(session_dir, 'pet3d', pet_run_ids, verbose=verbose)
+            _normalize_modality_output_run_dirs(session_dir, 'perf', perf_run_ids, verbose=verbose)
+        except Exception:
+            # Do not fail the pipeline on a post-processing layout step.
+            if verbose:
+                print("[WARNING] Failed to normalize output run directories")
 
         result['success'] = True
         result['session_dir'] = os.path.join(output_root, project_id, sub_id, date_id)
