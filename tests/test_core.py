@@ -11,10 +11,10 @@ from pathlib import Path
 
 def test_extract_image_id_variations():
   """Test regex extraction for various run ID formats."""
-  assert extract_image_id("sub-01_run-001_T1w.nii.gz") == "run-001"
-  assert extract_image_id("sub-01_r123_T1w.nii.gz") == "r123"
-  assert extract_image_id("sub-01_no_run_info.nii.gz") == "000"
-  assert extract_image_id("sub-01_ses-01_desc-preproc_T1w.nii.gz") == "000"
+  assert extract_image_id("sub-01_run-001_T1w.nii.gz") == "run-01"
+  assert extract_image_id("sub-01_r123_T1w.nii.gz") == "run-123"
+  assert extract_image_id("sub-01_no_run_info.nii.gz") == "run-01"
+  assert extract_image_id("sub-01_ses-01_desc-preproc_T1w.nii.gz") == "run-01"
 
 def test_get_modality_variant():
   # Test DTI direction appending
@@ -133,7 +133,7 @@ def test_process_session_t1_filter_and_dwi_persistence(mock_multi_run_data, tmp_
      
     # ASSERT 2: T1 filename passed is the r002 file
     t1_passed = kwargs['t1_filename']
-    assert "r002" in os.path.basename(t1_passed)
+    assert "run-02" in os.path.basename(t1_passed)
      
     # ASSERT 3: DWI filenames passed include BOTH files
     dti_passed = kwargs['dti_filenames']

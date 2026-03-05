@@ -10,7 +10,7 @@ def test_pipeline_valid(mock_bids_structure, tmp_path):
        patch("antsxmm.pipeline.antspyt1w.get_data", create=True):
 
     runner = CliRunner()
-    result = runner.invoke(main, [str(mock_bids_structure), str(tmp_path)])
+    result = runner.invoke(main, ["run", str(mock_bids_structure), str(tmp_path)])
    
   # Print output if it fails to help debugging
   if result.exit_code != 0:
@@ -26,7 +26,7 @@ def test_pipeline_failure(mock_bids_structure, tmp_path):
        patch("antsxmm.pipeline.antspyt1w.get_data", create=True):
 
     runner = CliRunner()
-    result = runner.invoke(main, [str(mock_bids_structure), str(tmp_path)])
+    result = runner.invoke(main, ["run", str(mock_bids_structure), str(tmp_path)])
   
   # Assert that the CLI exits with failure code
   assert result.exit_code == 1
