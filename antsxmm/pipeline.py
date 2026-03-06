@@ -1,3 +1,10 @@
+try:
+    from .environment import apply_default_environment
+except ImportError:
+    from antsxmm.environment import apply_default_environment
+
+# Apply stable process-wide defaults before importing heavy dependencies.
+apply_default_environment()
 import os
 import sys
 import types
@@ -115,6 +122,7 @@ def run_study(
     verbose: bool = False,
 ) -> list[str]:
     setup_logging(verbose)
+    apply_default_environment(logger=logging.getLogger(__name__))
     logging.info(f"Parsing BIDS layout from: {bids_dir}")
     
     layout_df = parse_antsxbids_layout(bids_dir)
