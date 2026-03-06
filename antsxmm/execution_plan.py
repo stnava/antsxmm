@@ -6,7 +6,7 @@ from typing import Any
 
 from .bids_entities import parse_entities
 from .run_id import normalize_run_id
-from .inputs import _as_path_list
+from .inputs import _as_path_list, _select_dti_filenames, _select_rsf_filenames
 
 _SUFFIX_TO_MODALITY = {
     'T1w': 'T1w',
@@ -93,8 +93,8 @@ def build_execution_plan(session_data: dict[str, Any], output_root: str, project
         'T2Flair': tuple(flair_paths[:1]),
         'perf': tuple(_coerce_paths(session_data, 'perf_filenames', 'perf_filename')[:1]),
         'pet3d': tuple(_coerce_paths(session_data, 'pet3d_filenames', 'pet3d_filename')[:1]),
-        'DTI': tuple(_coerce_paths(session_data, 'dti_filenames')[:2]),
-        'rsfMRI': tuple(_coerce_paths(session_data, 'rsf_filenames')[:2]),
+        'DTI': tuple(_select_dti_filenames(_coerce_paths(session_data, 'dti_filenames'))),
+        'rsfMRI': tuple(_select_rsf_filenames(_coerce_paths(session_data, 'rsf_filenames'))),
         'NM2DMT': tuple(_coerce_paths(session_data, 'nm_filenames')[:11]),
         'T1wHierarchical': tuple(t1_paths[:1]),
     }
