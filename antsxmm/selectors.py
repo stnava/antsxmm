@@ -213,13 +213,6 @@ class ModalitySelector:
     preferred_pair = False
 
     def normalize_existing(self, paths: Iterable[str]) -> list[str]:
-        """Normalize selector candidates without requiring on-disk existence.
-
-        Selection policy should operate on declared BIDS candidates, while later
-        staging/execution is responsible for validating readability/existence.
-        This preserves deterministic planning and keeps unit tests able to patch
-        staging without needing real files on disk.
-        """
         normalized = [os.path.realpath(p) for p in paths if is_nifti(p)]
         return sorted(set(normalized))
 

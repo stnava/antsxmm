@@ -23,6 +23,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 from .inputs import plan_session_inputs, _extract_run_id_from_filename, _collect_discovered_inputs
+from .diagnostics import diagnose_session_inputs, summarize_input_diagnostics
 from .pymm_execution import generate_xmm_dataframe, run_xmm_mm_csv
 from .execution_plan import build_execution_plan, validate_execution_plan
 from .status import _ensure_dir, _write_json
@@ -158,10 +159,29 @@ def process_session(
 
     session_out_dir = os.path.join(output_root, project_id, sub_id, date_id)
     input_fingerprint = compute_input_fingerprint(session_data, t1_run_match=t1_run_match)
+    input_diagnostics = diagnose_session_inputs(session_data, plan=plan)
+
+    def _write_input_diagnostics_artifact():
+        _ensure_dir(session_out_dir)
+        diagnostics_path = os.path.join(
+            session_out_dir,
+            f"{project_id}{separator}{sub_id}{separator}{date_id}{separator}input_diagnostics.json",
+        )
+        _write_json(diagnostics_path, input_diagnostics)
+        if verbose:
+            print(f"[INFO] Wrote input diagnostics: {diagnostics_path}")
+        result['input_diagnostics_path'] = diagnostics_path
+        return diagnostics_path
 
     if not plan.get('processable', False):
+        if write_input_manifest:
+            try:
+                _write_input_diagnostics_artifact()
+            except Exception:
+                pass
         if verbose:
             print("Error: No T1w found for {} {}".format(sub_id, date_id))
+            print("Input diagnostics: {}".format(summarize_input_diagnostics(input_diagnostics)))
         # Persist failure status for transparency
         try:
             write_session_status(
@@ -303,6 +323,12 @@ def process_session(
             'nm_not_selected': [p for p in discovered.get('nm_filenames', []) if p not in used['nm_filenames']],
         }
 
+        diagnostics_path = None
+        try:
+            diagnostics_path = _write_input_diagnostics_artifact()
+        except Exception:
+            diagnostics_path = None
+
         manifest = {
             'schema_version': 1,
             'project_id': project_id,
@@ -337,6 +363,8 @@ def process_session(
             ),
             'excluded': excluded,
             'selection_tracking': selection_tracking,
+            'input_diagnostics_path': diagnostics_path,
+            'input_diagnostics_summary': summarize_input_diagnostics(input_diagnostics),
         }
 
         manifest_path = os.path.join(
