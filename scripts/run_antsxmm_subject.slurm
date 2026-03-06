@@ -51,9 +51,9 @@ mkdir -p "${STUDY_OUT_ROOT}"
 # Common pattern: point antsxmm at the study BIDS root and restrict to one subject.
 #
 # Replace this block if your exact command differs.
-antsxmm \
-  --bids-dir "${STUDY_BIDS_ROOT}" \
-  --output-dir "${STUDY_OUT_ROOT}" \
+antsxmm run \
+ "${STUDY_BIDS_ROOT}" \
+ "${STUDY_OUT_ROOT}" \
   --participant-label "${SUBJECT_ID#sub-}"
 
 status=$?
