@@ -13,12 +13,13 @@ authors = [
     {name = "ANTsX Community"}
 ]
 dependencies = [
-    "antspymm>=1.1.0",
-    "antspyt1w",
+    "antspymm>=1.6.5",
+    "antspyt1w>=1.1.3",
+    "antspynet>=0.3.2"
     "pandas>=1.0.0",
     "tqdm",
     "click",
-    "antspyx",
+    "antspyx>=0.6.3",
 ]
 
 [project.optional-dependencies]
