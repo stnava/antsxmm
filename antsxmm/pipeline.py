@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 
 import click
-import pandas as pd
 from tqdm import tqdm
 
 # --- Logging Configuration ---

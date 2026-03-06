@@ -17,11 +17,7 @@ from .fingerprint import compute_input_fingerprint
 from .status import write_session_status
 from .staging import extract_image_id, get_modality_variant, sanitize_and_stage_file
 from .wide_table import bind_mm_rows, check_modality_order, build_wide_table_from_mmwide
-from .session import print_expected_tree, process_session, antspymm, ants
-from .run_id import normalize_run_id
-from .bids_entities import parse_entities
-from .pymm_execution import generate_xmm_dataframe, run_xmm_mm_csv
-from .execution_plan import ExecutionUnit, build_execution_plan, validate_execution_plan
+from .session import process_session, antspymm, ants
 
 __all__ = [
     "plan_session_inputs",
@@ -33,15 +29,7 @@ __all__ = [
     "bind_mm_rows",
     "check_modality_order",
     "build_wide_table_from_mmwide",
-    "print_expected_tree",
     "process_session",
-    "normalize_run_id",
-    "parse_entities",
-    "generate_xmm_dataframe",
-    "run_xmm_mm_csv",
-    "ExecutionUnit",
-    "build_execution_plan",
-    "validate_execution_plan",
     "antspymm",
     "ants",
 ]
