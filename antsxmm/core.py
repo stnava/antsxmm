@@ -29,7 +29,12 @@ from .fingerprint import compute_input_fingerprint
 from .status import write_session_status
 from .staging import extract_image_id, get_modality_variant, sanitize_and_stage_file
 from .wide_table import bind_mm_rows, check_modality_order, build_wide_table_from_mmwide
-from .session import process_session
+
+
+
+def process_session(*args, **kwargs):
+    from .session import process_session as _process_session
+    return _process_session(*args, **kwargs)
 
 __all__ = [
     "plan_session_inputs",

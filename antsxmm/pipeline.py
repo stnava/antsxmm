@@ -48,12 +48,14 @@ try:
     from .bids import parse_antsxbids_layout
     from .core import process_session, compute_input_fingerprint
     from .execution_plan import build_execution_plan
+    from .diagnostics import diagnose_bids_tree, write_study_diagnostics_json, format_study_diagnostics_summary
 except ImportError:
     # Fallback for local development/non-installed runs
     try:
         from antsxmm.bids import parse_antsxbids_layout
         from antsxmm.core import process_session, compute_input_fingerprint
         from antsxmm.execution_plan import build_execution_plan
+        from antsxmm.diagnostics import diagnose_bids_tree, write_study_diagnostics_json, format_study_diagnostics_summary
         from importlib.metadata import version
         __version__ = version("antsxmm")
     except Exception:
@@ -134,18 +136,45 @@ def run_study(
     
     layout_df = parse_antsxbids_layout(bids_dir)
 
-    if participant_label:
-        normalized_participant_label = str(participant_label).rstrip('/\\')
-        layout_df = layout_df[layout_df["subjectID"].astype(str) == normalized_participant_label]
+    normalized_participant_label = str(participant_label).rstrip('/\\') if participant_label else None
+    if normalized_participant_label:
         logging.info(f"Filtering for subject: {normalized_participant_label}")
-
     if session_label:
-        # Cast to string to avoid pandas type mismatch with numeric session IDs
-        layout_df = layout_df[layout_df["date"].astype(str) == str(session_label)]
         logging.info(f"Filtering for session: {session_label}")
 
-    if layout_df.empty:
-        logging.warning("No valid subjects/sessions found with provided filters.")
+    required_columns = {"subjectID", "date"}
+    has_required_columns = hasattr(layout_df, "columns") and required_columns.issubset(set(layout_df.columns))
+
+    if has_required_columns and normalized_participant_label:
+        layout_df = layout_df[layout_df["subjectID"].astype(str) == normalized_participant_label]
+
+    if has_required_columns and session_label:
+        # Cast to string to avoid pandas type mismatch with numeric session IDs
+        layout_df = layout_df[layout_df["date"].astype(str) == str(session_label)]
+
+    if (not has_required_columns) or layout_df.empty:
+        diagnostics = diagnose_bids_tree(bids_dir)
+        diagnostics["requested_filters"] = {
+            "participant_label": normalized_participant_label,
+            "session_label": str(session_label) if session_label else None,
+        }
+        if hasattr(layout_df, "columns"):
+            diagnostics["parsed_layout_columns"] = list(layout_df.columns)
+        diagnostics["parsed_layout_row_count"] = int(layout_df.shape[0]) if hasattr(layout_df, "shape") else 0
+        diagnostics_path = None
+        if not dry_run:
+            diagnostics_path = write_study_diagnostics_json(output_dir, project, diagnostics)
+            diagnostics["diagnostics_path"] = diagnostics_path
+        for line in format_study_diagnostics_summary(
+            diagnostics,
+            participant_label=normalized_participant_label,
+            session_label=str(session_label) if session_label else None,
+        ):
+            logging.warning(line)
+            print(f"[DIAGNOSTIC] {line}")
+        if diagnostics_path:
+            logging.warning(f"Study input diagnostics written to: {diagnostics_path}")
+            print(f"[DIAGNOSTIC] Study input diagnostics written to: {diagnostics_path}")
         return []
 
     logging.info(f"Found {len(layout_df)} unique sessions to process.")
