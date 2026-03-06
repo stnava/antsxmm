@@ -15,7 +15,7 @@ def generate_xmm_dataframe(session_data: dict[str, Any], output_root: str, proje
     The dataframe is derived from the antsxmm execution plan, making planning the
     sole authority for canonical output layout.
     """
-    plan = build_execution_plan(session_data, output_root=output_root, project_id=project_id)
+    plan = build_execution_plan(session_data, output_root=output_root, project_id=project_id, assume_selected=True)
     return pd.DataFrame([plan_to_row(plan, output_root=output_root)])
 
 

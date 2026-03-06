@@ -401,6 +401,7 @@ def process_session(
             execution_session_data,
             output_root=output_root,
             project_id=project_id,
+            assume_selected=True,
         )
         validate_execution_plan(execution_plan)
         xmm_df = generate_xmm_dataframe(

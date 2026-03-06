@@ -71,7 +71,7 @@ def _coerce_paths(session_data: dict[str, Any], list_key: str, single_key: str |
     return sorted([str(p) for p in paths if p])
 
 
-def build_execution_plan(session_data: dict[str, Any], output_root: str, project_id: str) -> list[ExecutionUnit]:
+def build_execution_plan(session_data: dict[str, Any], output_root: str, project_id: str, assume_selected: bool = False) -> list[ExecutionUnit]:
     subject = str(session_data.get('subjectID'))
     session = str(session_data.get('date') or session_data.get('sessionID'))
     if not subject:
@@ -80,22 +80,40 @@ def build_execution_plan(session_data: dict[str, Any], output_root: str, project
         raise KeyError("session_data missing required key: 'date' (or alias 'sessionID')")
 
     canonical_run = _pick_primary_run(session_data)
-    plan_inputs = plan_session_inputs(session_data)
-    used = plan_inputs.get('used', {})
-    t1_paths = tuple([used['t1_filename']]) if used.get('t1_filename') else tuple()
-    if not t1_paths:
-        raise ValueError('build_execution_plan requires at least one T1w input')
 
-    flair_paths = tuple([used['flair_or_t2_as_flair_filename']]) if used.get('flair_or_t2_as_flair_filename') else tuple()
+    if assume_selected:
+        t1_paths = tuple(_coerce_paths(session_data, 't1_filenames', 't1_filename'))
+        if not t1_paths:
+            raise ValueError('build_execution_plan requires at least one T1w input')
+
+        flair_paths = tuple(_coerce_paths(session_data, 'flair_filenames', 'flair_filename'))
+        perf_paths = tuple(_coerce_paths(session_data, 'perf_filenames', 'perf_filename'))
+        pet_paths = tuple(_coerce_paths(session_data, 'pet3d_filenames', 'pet3d_filename'))
+        dti_paths = tuple(_coerce_paths(session_data, 'dti_filenames', 'dti_filename'))
+        rsf_paths = tuple(_coerce_paths(session_data, 'rsf_filenames', 'rsf_filename'))
+        nm_paths = tuple(_coerce_paths(session_data, 'nm_filenames', 'nm_filename'))
+    else:
+        plan_inputs = plan_session_inputs(session_data)
+        used = plan_inputs.get('used', {})
+        t1_paths = tuple([used['t1_filename']]) if used.get('t1_filename') else tuple()
+        if not t1_paths:
+            raise ValueError('build_execution_plan requires at least one T1w input')
+
+        flair_paths = tuple([used['flair_or_t2_as_flair_filename']]) if used.get('flair_or_t2_as_flair_filename') else tuple()
+        perf_paths = tuple([used['perf_filename']]) if used.get('perf_filename') else tuple()
+        pet_paths = tuple([used['pet3d_filename']]) if used.get('pet3d_filename') else tuple()
+        dti_paths = tuple(used.get('dti_filenames', []))
+        rsf_paths = tuple(used.get('rsf_filenames', []))
+        nm_paths = tuple(used.get('nm_filenames', []))
 
     modality_inputs = {
         'T1w': t1_paths,
         'T2Flair': flair_paths,
-        'perf': tuple([used['perf_filename']]) if used.get('perf_filename') else tuple(),
-        'pet3d': tuple([used['pet3d_filename']]) if used.get('pet3d_filename') else tuple(),
-        'DTI': tuple(used.get('dti_filenames', [])),
-        'rsfMRI': tuple(used.get('rsf_filenames', [])),
-        'NM2DMT': tuple(used.get('nm_filenames', [])),
+        'perf': perf_paths,
+        'pet3d': pet_paths,
+        'DTI': dti_paths,
+        'rsfMRI': rsf_paths,
+        'NM2DMT': nm_paths,
         'T1wHierarchical': t1_paths,
     }
 
