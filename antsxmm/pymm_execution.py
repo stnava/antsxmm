@@ -52,6 +52,35 @@ from contextlib import contextmanager
 from typing import Any
 
 
+def _canonical_prefix_from_row(row: pd.Series, modality: str) -> str:
+    output_root = row.get("outputdir")
+    project_id = row.get("projectID")
+    subject_id = row.get("subjectID")
+    session_id = row.get("date")
+    run_id = row.get("xmm_run") or row.get("imageID") or "run-01"
+
+    missing = [
+        name
+        for name, value in (
+            ("outputdir", output_root),
+            ("projectID", project_id),
+            ("subjectID", subject_id),
+            ("date", session_id),
+        )
+        if value is None or str(value) == "" or str(value).lower() == "nan"
+    ]
+    if missing:
+        raise KeyError(
+            f"Missing deterministic prefix inputs for modality {modality}: {', '.join(missing)}"
+        )
+
+    out_dir = os.path.join(str(output_root), str(project_id), str(subject_id), str(session_id), str(modality), str(run_id))
+    return os.path.join(
+        out_dir,
+        f"{project_id}+{subject_id}+{session_id}+{modality}+{run_id}",
+    )
+
+
 @contextmanager
 def _patched_docsamson(antspymm_module: Any, study_df: pd.DataFrame):
     """
@@ -92,8 +121,8 @@ def _patched_docsamson(antspymm_module: Any, study_df: pd.DataFrame):
         if prefix is None and locmod == "T1wHierarchical":
             prefix = row.get("xmm_prefix_T1wHierarchical")
 
-        if prefix is None:
-            raise KeyError(f"Missing deterministic prefix for modality {locmod}")
+        if prefix is None or str(prefix) == '' or str(prefix).lower() == 'nan':
+            prefix = _canonical_prefix_from_row(row, locmod)
 
         images = _images_for_modality(row, locmod)
 

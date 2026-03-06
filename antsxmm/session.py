@@ -31,6 +31,33 @@ from .status import write_session_status
 from .staging import extract_image_id, get_modality_variant, sanitize_and_stage_file
 from .wide_table import build_wide_table_from_mmwide
 
+_DEFAULT_ANTSPYMM = antspymm
+_DEFAULT_ANTS = ants
+_DEFAULT_SANITIZE_AND_STAGE_FILE = sanitize_and_stage_file
+_DEFAULT_BUILD_WIDE_TABLE_FROM_MMWIDE = build_wide_table_from_mmwide
+
+
+
+def _resolve_runtime_dependency(local_name: str, core_value):
+    """Prefer explicit module-level monkeypatches, otherwise fall back to antsxmm.core."""
+    local_value = globals().get(local_name)
+    default_map = {
+        'antspymm': _DEFAULT_ANTSPYMM,
+        'ants': _DEFAULT_ANTS,
+        'sanitize_and_stage_file': _DEFAULT_SANITIZE_AND_STAGE_FILE,
+        'build_wide_table_from_mmwide': _DEFAULT_BUILD_WIDE_TABLE_FROM_MMWIDE,
+    }
+    default_value = default_map.get(local_name)
+
+    if local_value is None:
+        return core_value
+    if isinstance(local_value, types.SimpleNamespace) and not vars(local_value) and core_value is not None:
+        return core_value
+    if core_value is not None and local_value is default_value and core_value is not default_value:
+        return core_value
+    return local_value
+
+
 def print_expected_tree(output_root, project_id, sub_id, date_id, image_uid, 
                         flair_info, rsf_infos, dti_infos, nm_infos, perf_info, pet_info, sep="_"):
     """
@@ -114,20 +141,14 @@ def process_session(
         'session_dir': None
     }
 
-    # Resolve shared runtime seams late so tests can patch either antsxmm.session
-    # or antsxmm.core. Prefer explicit session-level overrides, then fall back to
-    # the core-owned defaults.
+    # Bind all shared runtime seams via antsxmm.core so unit tests can patch
+    # a single authoritative location.
     import antsxmm.core as _core_api  # local import avoids import-time cycles
 
-    session_antspymm = globals().get('antspymm', types.SimpleNamespace())
-    session_ants = globals().get('ants', types.SimpleNamespace())
-
-    antspymm = session_antspymm if (
-        hasattr(session_antspymm, 'mm_csv') or hasattr(session_antspymm, 'generate_mm_dataframe')
-    ) else _core_api.antspymm
-    ants = session_ants if type(session_ants) is not types.SimpleNamespace else _core_api.ants
-    sanitize_and_stage_file = _core_api.sanitize_and_stage_file
-    build_wide_table_from_mmwide = _core_api.build_wide_table_from_mmwide
+    antspymm = _resolve_runtime_dependency('antspymm', getattr(_core_api, 'antspymm', None))
+    ants = _resolve_runtime_dependency('ants', getattr(_core_api, 'ants', None))
+    sanitize_and_stage_file = _resolve_runtime_dependency('sanitize_and_stage_file', getattr(_core_api, 'sanitize_and_stage_file', None))
+    build_wide_table_from_mmwide = _resolve_runtime_dependency('build_wide_table_from_mmwide', getattr(_core_api, 'build_wide_table_from_mmwide', None))
 
 
     # 1. Plan inputs (selection/truncation) + compute fingerprint for resumability
