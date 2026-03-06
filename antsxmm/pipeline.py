@@ -39,11 +39,13 @@ try:
     from ._version import version as __version__
     from .bids import parse_antsxbids_layout
     from .core import process_session, compute_input_fingerprint
+    from .execution_plan import build_execution_plan
 except ImportError:
     # Fallback for local development/non-installed runs
     try:
         from antsxmm.bids import parse_antsxbids_layout
         from antsxmm.core import process_session, compute_input_fingerprint
+        from antsxmm.execution_plan import build_execution_plan
         from importlib.metadata import version
         __version__ = version("antsxmm")
     except Exception:
@@ -70,6 +72,30 @@ def pipeline_options(f):
     for option in reversed(options):
         f = option(f)
     return f
+
+
+
+def _planned_output_markers(output_dir: str, project: str, row_dict: dict) -> list[Path]:
+    """Return deterministic output markers expected for a successful session."""
+    try:
+        plan = build_execution_plan(row_dict, output_root=output_dir, project_id=project)
+    except Exception:
+        return []
+
+    markers: list[Path] = []
+    for unit in plan:
+        prefix = Path(unit.output_prefix)
+        marker = prefix.parent / f"{prefix.name}+mmwide.csv"
+        markers.append(marker)
+    return markers
+
+
+def _session_outputs_complete(output_dir: str, project: str, row_dict: dict) -> bool:
+    """A prior success status is only reusable if planned outputs still exist on disk."""
+    markers = _planned_output_markers(output_dir, project, row_dict)
+    if not markers:
+        return False
+    return all(marker.exists() for marker in markers)
 
 # --- Core Logic ---
 def run_study(
@@ -153,9 +179,13 @@ def run_study(
                 reason = 'rerun_failed' if should_run else 'already_success'
         elif resume and status is not None and bool(status.get('success', False)):
             prev = status.get('input_fingerprint', {}) or {}
-            if prev.get('hash') and fingerprint.get('hash') and prev.get('hash') == fingerprint.get('hash'):
+            hashes_match = bool(prev.get('hash') and fingerprint.get('hash') and prev.get('hash') == fingerprint.get('hash'))
+            if hashes_match and _session_outputs_complete(output_dir, project, row_dict):
                 should_run = False
                 reason = 'resume_skip'
+            elif hashes_match:
+                should_run = True
+                reason = 'outputs_missing'
             else:
                 should_run = True
                 reason = 'inputs_changed'

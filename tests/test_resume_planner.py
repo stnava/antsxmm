@@ -39,6 +39,13 @@ def test_run_study_resume_skips_unchanged_success(tmp_path, monkeypatch):
         json.dumps({"success": True, "input_fingerprint": fp}),
         encoding="utf-8",
     )
+    markers = [
+        out_root / "Project" / "sub-01" / "ses-01" / "T1w" / "run-01" / "Project+sub-01+ses-01+T1w+run-01+mmwide.csv",
+        out_root / "Project" / "sub-01" / "ses-01" / "T1wHierarchical" / "run-01" / "Project+sub-01+ses-01+T1wHierarchical+run-01+mmwide.csv",
+    ]
+    for marker in markers:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("ok", encoding="utf-8")
 
     def should_not_run(*args, **kwargs):
         raise AssertionError("process_session should not be called when resume skips")
