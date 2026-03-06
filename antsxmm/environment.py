@@ -51,6 +51,47 @@ def resolve_thread_count(default_thread_count: int = 8, environ: dict[str, str] 
     return EnvironmentConfig(thread_count=int(default_thread_count), source="default")
 
 
+def _default_values(default_thread_count: int = 8, environ: dict[str, str] | None = None) -> tuple[EnvironmentConfig, dict[str, str]]:
+    env = os.environ if environ is None else environ
+    cfg = resolve_thread_count(default_thread_count=default_thread_count, environ=env)
+    defaults = {key: str(cfg.thread_count) for key in THREAD_ENV_KEYS}
+    defaults.update(NON_THREAD_ENV_DEFAULTS)
+    return cfg, defaults
+
+
+def get_effective_environment_policy(
+    default_thread_count: int = 8,
+    environ: dict[str, str] | None = None,
+) -> dict[str, object]:
+    """Return the effective environment policy without mutating the environment."""
+    env = os.environ if environ is None else environ
+    cfg, defaults = _default_values(default_thread_count=default_thread_count, environ=env)
+
+    effective: dict[str, str] = {}
+    for key, default_value in defaults.items():
+        current = env.get(key)
+        effective[key] = str(current) if current is not None and str(current).strip() != "" else default_value
+
+    return {
+        "thread_count": cfg.thread_count,
+        "thread_source": cfg.source,
+        "effective": effective,
+    }
+
+
+def format_environment_policy_for_log(policy: dict[str, object]) -> list[str]:
+    """Format a stable human-readable environment summary for logging."""
+    lines = [
+        f"Environment thread policy: thread_count={policy['thread_count']} source={policy['thread_source']}"
+    ]
+    effective = policy.get("effective", {})
+    if isinstance(effective, dict):
+        for key in (*THREAD_ENV_KEYS, *NON_THREAD_ENV_DEFAULTS.keys()):
+            if key in effective:
+                lines.append(f"Environment {key}={effective[key]} (effective)")
+    return lines
+
+
 def apply_default_environment(
     default_thread_count: int = 8,
     environ: dict[str, str] | None = None,
@@ -63,10 +104,7 @@ def apply_default_environment(
     Child processes inherit these values automatically.
     """
     env = os.environ if environ is None else environ
-    cfg = resolve_thread_count(default_thread_count=default_thread_count, environ=env)
-
-    defaults = {key: str(cfg.thread_count) for key in THREAD_ENV_KEYS}
-    defaults.update(NON_THREAD_ENV_DEFAULTS)
+    cfg, defaults = _default_values(default_thread_count=default_thread_count, environ=env)
 
     applied: dict[str, str] = {}
     preserved: dict[str, str] = {}

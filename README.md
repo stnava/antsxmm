@@ -53,7 +53,7 @@ antsxmm tree BIDS/PPMI/sub-182341
 ```bash
 antsxmm run BIDS/PPMI pymm --project PPMI \
   --participant-label sub-182341 \
-  --session-label 20230111
+  --session-label ses-20230111
 ```
 
 ### Run a study
@@ -70,7 +70,7 @@ antsxmm run BIDS/PPMI pymm --project PPMI --dry-run --verbose
 
 ## Environment defaults and cluster usage
 
-ANTsXMM now applies runtime defaults as early as possible in the CLI bootstrap process, before the heavier pipeline module and optional imaging dependencies are imported. This lets all child processes inherit the same environment while still respecting explicit user or scheduler settings.
+ANTsXMM now applies runtime defaults in a dedicated CLI bootstrap module before the heavier pipeline module and optional imaging dependencies are imported. This lets all child processes inherit the same environment while still respecting explicit user or scheduler settings. Programmatic callers that invoke pipeline functions directly remain supported; in that case antsxmm applies the same defaults at runtime before processing begins.
 
 The following variables are managed when they are not already set:
 

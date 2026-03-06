@@ -29,7 +29,7 @@ test = [
 ]
 
 [project.scripts]
-antsxmm = "antsxmm.pipeline:main"
+antsxmm = "antsxmm.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["antsxmm*"]

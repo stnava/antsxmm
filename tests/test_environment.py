@@ -1,6 +1,6 @@
 import logging
 
-from antsxmm.environment import apply_default_environment, resolve_thread_count
+from antsxmm.environment import apply_default_environment, get_effective_environment_policy, resolve_thread_count
 
 
 def test_resolve_thread_count_prefers_antsxmm_threads():
@@ -46,3 +46,12 @@ def test_apply_default_environment_falls_back_to_default_thread_count():
     assert env["TF_NUM_INTEROP_THREADS"] == "7"
     assert env["OPENBLAS_NUM_THREADS"] == "7"
     assert env["MPLBACKEND"] == "Agg"
+
+
+def test_get_effective_environment_policy_reports_defaults_without_mutating():
+    env = {}
+    result = get_effective_environment_policy(default_thread_count=5, environ=env)
+    assert result["thread_count"] == 5
+    assert result["thread_source"] == "default"
+    assert result["effective"]["TF_NUM_INTEROP_THREADS"] == "5"
+    assert "TF_NUM_INTEROP_THREADS" not in env

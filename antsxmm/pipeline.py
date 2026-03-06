@@ -1,10 +1,3 @@
-try:
-    from .environment import apply_default_environment
-except ImportError:
-    from antsxmm.environment import apply_default_environment
-
-# Apply stable process-wide defaults before importing heavy dependencies.
-apply_default_environment()
 import os
 import sys
 import types
@@ -12,6 +5,11 @@ import logging
 import warnings
 import json
 from pathlib import Path
+
+try:
+    from .environment import apply_default_environment, format_environment_policy_for_log, get_effective_environment_policy
+except ImportError:
+    from antsxmm.environment import apply_default_environment, format_environment_policy_for_log, get_effective_environment_policy
 
 import click
 from tqdm import tqdm
@@ -25,6 +23,9 @@ def setup_logging(verbose: bool):
         level=level,
         force=True
     )
+
+    logging.getLogger("matplotlib").setLevel(logging.WARNING)
+    logging.getLogger("matplotlib.font_manager").setLevel(logging.WARNING)
     
     if not verbose:
         # Silence the specific scikit-learn random_state warnings from dependencies
@@ -122,7 +123,13 @@ def run_study(
     verbose: bool = False,
 ) -> list[str]:
     setup_logging(verbose)
-    apply_default_environment(logger=logging.getLogger(__name__))
+    env_payload = apply_default_environment()
+    for line in format_environment_policy_for_log({
+        "thread_count": env_payload["thread_count"],
+        "thread_source": env_payload["thread_source"],
+        "effective": env_payload["effective"],
+    }):
+        logging.info(line)
     logging.info(f"Parsing BIDS layout from: {bids_dir}")
     
     layout_df = parse_antsxbids_layout(bids_dir)
@@ -342,6 +349,8 @@ def _run_pipeline_logic(
     """Internal logic to bridge CLI and execution."""
     setup_logging(verbose)
     logging.info(f"antsxmm version {__version__}")
+    for line in format_environment_policy_for_log(get_effective_environment_policy()):
+        logging.info(line)
 
     if dl_weights:
         if not hasattr(antspyt1w, "get_data") or not hasattr(antspymm, "get_data"):
@@ -378,7 +387,7 @@ def entry_point():
         # If first arg is not a command, not a help flag, and looks like a path/string
         if arg1 not in main.commands and arg1 not in ['-h', '--help', '--version']:
             sys.argv.insert(1, 'run')
-    main()
+    return main()
 
 if __name__ == "__main__":
     entry_point()
