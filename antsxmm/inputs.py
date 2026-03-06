@@ -1,4 +1,3 @@
-
 import os
 import math
 import re
@@ -6,6 +5,7 @@ import json
 from pathlib import Path
 from datetime import datetime, timezone
 import pandas as pd
+
 
 def _extract_run_id_from_filename(path: str) -> str:
     """
@@ -145,204 +145,258 @@ def _sidecar_paths_for_nifti(nifti_path: str) -> list[str]:
     return out
 
 
+def _load_json_sidecar(nifti_path: str) -> dict:
+    for p in _sidecar_paths_for_nifti(nifti_path):
+        if p.endswith('.json'):
+            try:
+                with open(p, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                return data if isinstance(data, dict) else {}
+            except Exception:
+                return {}
+    return {}
 
 
-_PHASE_FORWARD_LABELS = ("LR", "AP", "SI")
-_PHASE_REVERSE_LABELS = ("RL", "PA", "IS")
-
-
-def _safe_read_json(path: str) -> dict:
-    try:
-        with open(path, 'r', encoding='utf-8') as f:
-            obj = json.load(f)
-        return obj if isinstance(obj, dict) else {}
-    except Exception:
-        return {}
-
-
-def _json_sidecar_for_nifti(nifti_path: str) -> str | None:
-    p = Path(nifti_path)
-    if p.name.endswith('.nii.gz'):
-        base = p.with_name(p.name[:-7])
-    elif p.name.endswith('.nii'):
-        base = p.with_name(p.name[:-4])
-    else:
-        return None
-    sidecar = str(base) + '.json'
-    return sidecar if os.path.exists(sidecar) else None
-
-
-def _phase_bucket_from_json_metadata(meta: dict) -> str | None:
-    ped = str(meta.get('PhaseEncodingDirection', '')).strip().lower()
-    mapping = {
-        'i': 'LR',
-        'i-': 'RL',
-        'j': 'AP',
-        'j-': 'PA',
-        'k': 'SI',
-        'k-': 'IS',
-    }
-    if ped in mapping:
-        return mapping[ped]
-
-    direction = str(meta.get('PhaseEncodingAxis', '')).strip().upper()
-    polarity = str(meta.get('PhaseEncodingPolarityGE', '')).strip().lower()
-    if direction in ('ROW', 'COL') and polarity in ('flipped', 'unflipped'):
-        if direction == 'COL':
-            return 'PA' if polarity == 'flipped' else 'AP'
-        return 'RL' if polarity == 'flipped' else 'LR'
-    return None
-
-
-def _extract_terminal_suffix(path: str) -> str:
+def _filename_without_nifti_ext(path: str) -> str:
     name = Path(path).name
     if name.endswith('.nii.gz'):
-        stem = name[:-7]
-    else:
-        stem = Path(name).stem
-    return stem.split('_')[-1].lower() if stem else ''
+        return name[:-7]
+    if name.endswith('.nii'):
+        return name[:-4]
+    return name
 
 
-def _extract_phase_direction_label(path: str) -> str | None:
-    name = Path(path).name
-    for pat in (
-        r'(?:^|[_-])dir-(LR|RL|AP|PA|SI|IS)(?:[_-]|$)',
-        r'(?:^|[_-])(LR|RL|AP|PA|SI|IS)(?:[_-]|(?:dwi|bold)(?:a)?(?:[_-]|$))',
-    ):
-        m = re.search(pat, name, flags=re.IGNORECASE)
-        if m:
-            return m.group(1).upper()
-    sidecar = _json_sidecar_for_nifti(path)
-    if sidecar:
-        meta = _safe_read_json(sidecar)
-        bucket = _phase_bucket_from_json_metadata(meta)
-        if bucket:
-            return bucket
+def _bids_tokens(path: str) -> list[str]:
+    return _filename_without_nifti_ext(path).split('_')
+
+
+def _get_bids_entity(path: str, key: str) -> str | None:
+    prefix = f"{key}-"
+    for tok in _bids_tokens(path):
+        if tok.startswith(prefix) and len(tok) > len(prefix):
+            return tok[len(prefix):]
     return None
 
 
-def _extract_task_label(path: str) -> str | None:
-    name = Path(path).name
-    m = re.search(r'(?:^|[_-])task-([A-Za-z0-9]+)(?:[_-]|$)', name, flags=re.IGNORECASE)
-    if m:
-        return m.group(1).lower()
-    sidecar = _json_sidecar_for_nifti(path)
-    if sidecar:
-        meta = _safe_read_json(sidecar)
-        task_name = str(meta.get('TaskName', '')).strip().lower()
-        return task_name or None
-    return None
+def _suffix_token(path: str) -> str:
+    toks = _bids_tokens(path)
+    return toks[-1] if toks else ''
+
+
+def _read_phase_direction(path: str) -> str | None:
+    direction = _get_bids_entity(path, 'dir')
+    if direction:
+        return direction.upper()
+
+    meta = _load_json_sidecar(path)
+    phase = meta.get('PhaseEncodingDirection')
+    if not isinstance(phase, str) or not phase:
+        return None
+    phase = phase.strip().lower().rstrip('-')
+    mapping = {
+        'i': 'LR',
+        'i+': 'LR',
+        'i-': 'RL',
+        'j': 'AP',
+        'j+': 'AP',
+        'j-': 'PA',
+        'k': 'SI',
+        'k+': 'SI',
+        'k-': 'IS',
+        'lr': 'LR',
+        'rl': 'RL',
+        'ap': 'AP',
+        'pa': 'PA',
+        'si': 'SI',
+        'is': 'IS',
+    }
+    return mapping.get(phase)
+
+
+def _exact_suffix_kind(path: str, expected_suffix: str) -> bool:
+    return _suffix_token(path).lower() == expected_suffix.lower()
+
+
+def _variant_suffix_kind(path: str, expected_suffix: str) -> bool:
+    suffix = _suffix_token(path).lower()
+    expected = expected_suffix.lower()
+    return suffix.startswith(expected) and suffix != expected
 
 
 def _run_number(path: str) -> int:
     run_id = _extract_run_id_from_filename(path)
-    m = re.search(r'run-(\d+)', run_id)
+    m = re.search(r"run-(\d+)", run_id)
     return int(m.group(1)) if m else 1
 
 
-def _selection_score(
-    path: str,
-    *,
-    exact_suffixes: tuple[str, ...],
-    preferred_task: str | None = None,
-) -> tuple:
-    direction = _extract_phase_direction_label(path) or 'ZZ'
-    exact_suffix_rank = 0 if _extract_terminal_suffix(path) in exact_suffixes else 1
-    known_direction_rank = 0 if direction != 'ZZ' else 1
-    preferred_task_rank = 1
-    if preferred_task is not None:
-        task_label = _extract_task_label(path)
-        preferred_task_rank = 0 if task_label == preferred_task else 1
-    reverse_rank = 0 if direction in _PHASE_REVERSE_LABELS else 1
-    run_rank = _run_number(path)
-    basename = Path(path).name.lower()
-    return (preferred_task_rank, known_direction_rank, exact_suffix_rank, run_rank, reverse_rank, basename)
+def _modality_rank(path: str, modality: str) -> tuple[int, ...]:
+    suffix = _suffix_token(path).lower()
+    task = (_get_bids_entity(path, 'task') or '').lower()
+    dir_code = _read_phase_direction(path)
+
+    if modality == 't1':
+        return (
+            0 if _exact_suffix_kind(path, 'T1w') else 1,
+            0 if task == '' else 1,
+            0 if 't1w' in suffix else 1,
+            _run_number(path),
+            len(Path(path).name),
+            Path(path).name.lower(),
+        )
+    if modality == 'flair_or_t2':
+        return (
+            0 if _exact_suffix_kind(path, 'FLAIR') else 1,
+            0 if _exact_suffix_kind(path, 'T2w') else 1,
+            0 if suffix in ('flair', 't2w') else 1,
+            _run_number(path),
+            len(Path(path).name),
+            Path(path).name.lower(),
+        )
+    if modality == 'rsf':
+        return (
+            0 if task == 'rest' else 1,
+            0 if _exact_suffix_kind(path, 'bold') else 1,
+            0 if dir_code in {'LR', 'RL', 'AP', 'PA', 'SI', 'IS'} else 1,
+            _run_number(path),
+            len(Path(path).name),
+            Path(path).name.lower(),
+        )
+    if modality == 'dti':
+        return (
+            0 if _exact_suffix_kind(path, 'dwi') else 1,
+            0 if dir_code in {'LR', 'RL', 'AP', 'PA', 'SI', 'IS'} else 1,
+            _run_number(path),
+            len(Path(path).name),
+            Path(path).name.lower(),
+        )
+    if modality == 'perf':
+        return (
+            0 if _exact_suffix_kind(path, 'asl') else 1,
+            0 if _exact_suffix_kind(path, 'm0scan') else 1,
+            0 if 'm0' not in Path(path).name.lower() else 1,
+            _run_number(path),
+            len(Path(path).name),
+            Path(path).name.lower(),
+        )
+    if modality == 'pet3d':
+        tracer = str(_load_json_sidecar(path).get('TracerRadionuclide', '') or '').strip()
+        return (
+            0 if _exact_suffix_kind(path, 'pet') else 1,
+            0 if tracer else 1,
+            _run_number(path),
+            len(Path(path).name),
+            Path(path).name.lower(),
+        )
+    if modality == 'nm':
+        return (
+            _run_number(path),
+            0 if _exact_suffix_kind(path, 'NM') else 1,
+            len(Path(path).name),
+            Path(path).name.lower(),
+        )
+    return (_run_number(path), len(Path(path).name), Path(path).name.lower())
 
 
-def _select_phase_encoded_filenames(
-    paths,
-    *,
-    exact_suffixes: tuple[str, ...],
-    preferred_task: str | None = None,
-) -> list[str]:
-    candidates = [p for p in _as_path_list(paths) if p]
-    if not candidates:
+def _direction_pair_candidates(paths: list[str], modality: str) -> list[str]:
+    if not paths:
         return []
-
-    ranked = sorted(
-        candidates,
-        key=lambda p: _selection_score(p, exact_suffixes=exact_suffixes, preferred_task=preferred_task),
-    )
-
-    by_direction: dict[str, list[str]] = {}
-    for path in ranked:
-        direction = _extract_phase_direction_label(path)
-        if direction is not None:
-            by_direction.setdefault(direction, []).append(path)
-
-    def _best(direction: str) -> str | None:
-        items = by_direction.get(direction, [])
-        return items[0] if items else None
-
-    preferred_pairs = [
-        ('LR', 'RL'),
-        ('AP', 'PA'),
-        ('SI', 'IS'),
-        ('LR', 'PA'),
-        ('AP', 'RL'),
-    ]
-
-    selected: list[str] = []
-    used: set[str] = set()
-
-    for a, b in preferred_pairs:
-        pa = _best(a)
-        pb = _best(b)
-        if pa and pb:
-            selected.extend([pa, pb])
-            used.update([pa, pb])
-            break
-
-    if not selected:
-        for path in ranked:
-            direction = _extract_phase_direction_label(path)
-            if direction is None or path in used:
-                continue
-            selected.append(path)
-            used.add(path)
-            first_direction = direction
-            complementary = {
-                'LR': ('RL', 'PA'),
-                'RL': ('LR', 'AP'),
-                'AP': ('PA', 'RL'),
-                'PA': ('AP', 'LR'),
-                'SI': ('IS',),
-                'IS': ('SI',),
-            }.get(first_direction, ())
-            for comp_direction in complementary:
-                pb = _best(comp_direction)
-                if pb and pb not in used:
-                    selected.append(pb)
-                    used.add(pb)
-                    break
-            break
-
-    for path in ranked:
-        if len(selected) >= 2:
-            break
-        if path not in used:
-            selected.append(path)
-            used.add(path)
-
-    return selected[:2]
+    ranked = sorted(paths, key=lambda p: _modality_rank(p, modality))
+    pairs = [('LR', 'RL'), ('AP', 'PA'), ('SI', 'IS')]
+    for a, b in pairs:
+        first = next((p for p in ranked if _read_phase_direction(p) == a), None)
+        second = next((p for p in ranked if _read_phase_direction(p) == b and p != first), None)
+        if first and second:
+            return [first, second]
+    return ranked[:2]
 
 
-def _select_dti_filenames(paths) -> list[str]:
-    return _select_phase_encoded_filenames(paths, exact_suffixes=('dwi',))
+def _selection_reason_lines(path: str, modality: str) -> list[str]:
+    reasons: list[str] = []
+    suffix = _suffix_token(path)
+    task = _get_bids_entity(path, 'task')
+    direction = _read_phase_direction(path)
+
+    if modality == 't1' and _exact_suffix_kind(path, 'T1w'):
+        reasons.append('exact_suffix:T1w')
+    if modality == 'flair_or_t2':
+        if _exact_suffix_kind(path, 'FLAIR'):
+            reasons.append('exact_suffix:FLAIR')
+        elif _exact_suffix_kind(path, 'T2w'):
+            reasons.append('fallback_suffix:T2w')
+    if modality == 'rsf':
+        if (task or '').lower() == 'rest':
+            reasons.append('task:rest')
+        if _exact_suffix_kind(path, 'bold'):
+            reasons.append('exact_suffix:bold')
+    if modality == 'dti' and _exact_suffix_kind(path, 'dwi'):
+        reasons.append('exact_suffix:dwi')
+    if modality == 'perf':
+        if _exact_suffix_kind(path, 'asl'):
+            reasons.append('exact_suffix:asl')
+        if _exact_suffix_kind(path, 'm0scan'):
+            reasons.append('supporting_scan:m0scan')
+    if modality == 'pet3d' and _exact_suffix_kind(path, 'pet'):
+        reasons.append('exact_suffix:pet')
+    if modality == 'nm' and suffix.lower() == 'nm':
+        reasons.append('exact_suffix:NM')
+    if direction:
+        reasons.append(f'phase_direction:{direction}')
+    reasons.append(f'run:{_extract_run_id_from_filename(path)}')
+    return reasons
 
 
-def _select_rsf_filenames(paths) -> list[str]:
-    return _select_phase_encoded_filenames(paths, exact_suffixes=('bold',), preferred_task='rest')
+def _ranked_selection(paths: list[str], modality: str, *, limit: int | None, preferred_pair: bool = False) -> tuple[list[str], dict]:
+    existing = [os.path.realpath(p) for p in paths if _is_nifti(p) and os.path.exists(p)]
+    unique_existing = sorted(set(existing))
+    ranked = sorted(unique_existing, key=lambda p: _modality_rank(p, modality))
+
+    if preferred_pair and limit == 2:
+        selected = _direction_pair_candidates(ranked, modality)
+    elif limit is None:
+        selected = ranked
+    else:
+        selected = ranked[:limit]
+
+    selected_set = set(selected)
+    excluded = [p for p in ranked if p not in selected_set]
+    tracking = {
+        'strategy': modality,
+        'limit': limit,
+        'preferred_pair': bool(preferred_pair),
+        'ranked_candidates': [
+            {
+                'path': p,
+                'selected': p in selected_set,
+                'rank': idx + 1,
+                'reasons': _selection_reason_lines(p, modality),
+            }
+            for idx, p in enumerate(ranked)
+        ],
+        'selected': selected,
+        'excluded': excluded,
+    }
+    return selected, tracking
+
+
+def _discover_perf_candidates(session_data) -> list[str]:
+    perf_list = _as_path_list(session_data.get('perf_filenames'))
+    if perf_list:
+        return perf_list
+    perf_single = session_data.get('perf_filename')
+    if isinstance(perf_single, (str, os.PathLike)) and str(perf_single):
+        return [os.fspath(perf_single)]
+
+    ses_path = session_data.get('session_path')
+    if isinstance(ses_path, (str, os.PathLike)) and str(ses_path):
+        ses = Path(ses_path)
+        candidates: list[str] = []
+        for perf_dir in (ses / 'perf', ses / 'asl'):
+            if perf_dir.exists() and perf_dir.is_dir():
+                candidates.extend([str(p) for p in sorted(perf_dir.glob('*.nii'))])
+                candidates.extend([str(p) for p in sorted(perf_dir.glob('*.nii.gz'))])
+        return candidates
+    return []
+
 
 
 def plan_session_inputs(session_data, *, t1_run_match: str | None = None) -> dict:
@@ -359,19 +413,37 @@ def plan_session_inputs(session_data, *, t1_run_match: str | None = None) -> dic
     if not date_id:
         raise KeyError("session_data missing required key: 'date' (or alias 'sessionID')")
 
+    selection_tracking: dict[str, dict] = {}
+
     # T1 selection
-    all_t1s = _as_path_list(session_data.get('t1_filenames'))
-    if not all_t1s:
+    t1_candidates = [p for p in _as_path_list(session_data.get('t1_filenames')) if p]
+    if not t1_candidates:
         t1_fn = session_data.get('t1_filename')
-    else:
-        t1_fn = all_t1s[0]
-        if t1_run_match:
-            matches = [f for f in all_t1s if t1_run_match in os.path.basename(f)]
-            if matches:
-                t1_fn = matches[0]
+        t1_candidates = [t1_fn] if t1_fn else []
+
+    t1_selected, t1_tracking = _ranked_selection(t1_candidates, 't1', limit=1)
+    if t1_run_match and len(t1_candidates) > 1:
+        matched = [os.path.realpath(p) for p in t1_candidates if t1_run_match in os.path.basename(p) and os.path.exists(p) and _is_nifti(p)]
+        if matched:
+            ranked_match = sorted(set(matched), key=lambda p: _modality_rank(p, 't1'))
+            t1_selected = ranked_match[:1]
+            sel = set(t1_selected)
+            ranked_all = [c['path'] for c in t1_tracking['ranked_candidates']]
+            t1_tracking['ranked_candidates'] = [
+                {
+                    **c,
+                    'selected': c['path'] in sel,
+                    'reasons': list(c['reasons']) + (['matched_t1_run'] if t1_run_match in os.path.basename(c['path']) else []),
+                }
+                for c in t1_tracking['ranked_candidates']
+            ]
+            t1_tracking['selected'] = t1_selected
+            t1_tracking['excluded'] = [p for p in ranked_all if p not in sel]
+            t1_tracking['t1_run_match'] = t1_run_match
+    selection_tracking['t1'] = t1_tracking
+    t1_fn = t1_selected[0] if t1_selected else None
 
     if not t1_fn:
-        # No T1 means we cannot process this session.
         return {
             'subjectID': sub_id,
             'sessionID': date_id,
@@ -379,71 +451,44 @@ def plan_session_inputs(session_data, *, t1_run_match: str | None = None) -> dic
             'reason': 'no_T1w',
             'used': {},
             'nifti_inputs': [],
+            'selection_tracking': selection_tracking,
         }
 
     # FLAIR (fallback to T2w)
-    flair_raw = session_data.get('flair_filename', None)
-    if isinstance(flair_raw, float) and pd.isna(flair_raw):
-        flair_raw = None
-    if not isinstance(flair_raw, (str, os.PathLike)):
-        flair_raw = None
-    if not flair_raw:
-        flair_list = _as_path_list(session_data.get('flair_filenames'))
-        flair_raw = flair_list[0] if flair_list else None
-    if not flair_raw:
-        t2_raw = session_data.get('t2w_filename', None)
-        if isinstance(t2_raw, float) and pd.isna(t2_raw):
-            t2_raw = None
-        if isinstance(t2_raw, (str, os.PathLike)):
-            flair_raw = os.fspath(t2_raw)
-        else:
-            t2_list = _as_path_list(session_data.get('t2w_filenames'))
-            flair_raw = t2_list[0] if t2_list else None
+    flair_candidates = _as_path_list(session_data.get('flair_filenames')) + _as_path_list(session_data.get('t2w_filenames'))
+    flair_selected, flair_tracking = _ranked_selection(flair_candidates, 'flair_or_t2', limit=1)
+    selection_tracking['flair_or_t2'] = flair_tracking
+    flair_raw = flair_selected[0] if flair_selected else None
 
-    # rsfMRI (select the best complementary pair, capped at 2)
-    rsf_raw = _as_path_list(session_data.get('rsf_filenames'))
-    rsf_selected_raw = _select_rsf_filenames(rsf_raw)
+    # rsfMRI (pair-aware, max 2)
+    rsf_candidates = _as_path_list(session_data.get('rsf_filenames'))
+    rsf_selected_raw, rsf_tracking = _ranked_selection(rsf_candidates, 'rsf', limit=2, preferred_pair=True)
+    selection_tracking['rsf'] = rsf_tracking
 
-    # DTI (select the best complementary pair, capped at 2)
-    dti_raw = _as_path_list(session_data.get('dti_filenames'))
-    dti_selected_raw = _select_dti_filenames(dti_raw)
+    # DTI (pair-aware, max 2)
+    dti_candidates = _as_path_list(session_data.get('dti_filenames'))
+    dti_selected_raw, dti_tracking = _ranked_selection(dti_candidates, 'dti', limit=2, preferred_pair=True)
+    selection_tracking['dti'] = dti_tracking
 
-    # NM (no truncation)
-    nm_selected_raw = _as_path_list(session_data.get('nm_filenames'))
+    # NM (select all, but deterministically rank/order)
+    nm_candidates = _as_path_list(session_data.get('nm_filenames'))
+    nm_selected_raw, nm_tracking = _ranked_selection(nm_candidates, 'nm', limit=None)
+    selection_tracking['nm'] = nm_tracking
 
-    # Perf: scalar/list with asl/perf discovery
-    perf_raw = session_data.get('perf_filename', None)
-    if isinstance(perf_raw, float) and pd.isna(perf_raw):
-        perf_raw = None
-    if not isinstance(perf_raw, (str, os.PathLike)):
-        perf_raw = None
-    if not perf_raw:
-        perf_list = _as_path_list(session_data.get('perf_filenames'))
-        perf_raw = perf_list[0] if perf_list else None
-    if not perf_raw:
-        ses_path = session_data.get('session_path')
-        if isinstance(ses_path, (str, os.PathLike)) and str(ses_path):
-            ses = Path(ses_path)
-            candidates: list[Path] = []
-            for perf_dir in (ses / 'perf', ses / 'asl'):
-                if perf_dir.exists() and perf_dir.is_dir():
-                    candidates.extend(sorted(perf_dir.glob('*.nii')))
-                    candidates.extend(sorted(perf_dir.glob('*.nii.gz')))
-            for c in candidates:
-                sp = str(c)
-                if _is_nifti(sp) and os.path.exists(sp):
-                    perf_raw = sp
-                    break
+    # Perf (select one)
+    perf_candidates = _discover_perf_candidates(session_data)
+    perf_selected, perf_tracking = _ranked_selection(perf_candidates, 'perf', limit=1)
+    selection_tracking['perf'] = perf_tracking
+    perf_raw = perf_selected[0] if perf_selected else None
 
-    # PET
-    pet_raw = session_data.get('pet3d_filename', None)
-    if isinstance(pet_raw, float) and pd.isna(pet_raw):
-        pet_raw = None
-    if not isinstance(pet_raw, (str, os.PathLike)):
-        pet_raw = None
-    if not pet_raw:
-        pet_list = _as_path_list(session_data.get('pet3d_filenames'))
-        pet_raw = pet_list[0] if pet_list else None
+    # PET (select one)
+    pet_candidates = _as_path_list(session_data.get('pet3d_filenames'))
+    pet_single = session_data.get('pet3d_filename', None)
+    if isinstance(pet_single, (str, os.PathLike)) and str(pet_single):
+        pet_candidates = [os.fspath(pet_single)] + pet_candidates
+    pet_selected, pet_tracking = _ranked_selection(pet_candidates, 'pet3d', limit=1)
+    selection_tracking['pet3d'] = pet_tracking
+    pet_raw = pet_selected[0] if pet_selected else None
 
     rp = os.path.realpath
     used = {
@@ -478,4 +523,5 @@ def plan_session_inputs(session_data, *, t1_run_match: str | None = None) -> dic
         'pet_raw': pet_raw,
         'used': used,
         'nifti_inputs': nifti_inputs,
+        'selection_tracking': selection_tracking,
     }

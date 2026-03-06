@@ -285,17 +285,22 @@ def process_session(
                 print(f"  - {k}: {v}")
 
         # Exclusions due to truncation / selection.
+        selection_tracking = plan.get('selection_tracking', {})
         excluded = {
-            # Truncation: items discovered but not selected for processing.
+            # Truncation / capped multi-input modalities.
             'rsf_truncated': [p for p in discovered.get('rsf_filenames', []) if p not in used['rsf_filenames']],
             'dti_truncated': [p for p in discovered.get('dti_filenames', []) if p not in used['dti_filenames']],
-            # Single-selection modalities
+            # Single-selection modalities.
             't1_not_selected': [p for p in discovered.get('t1_filenames', []) if used['t1_filename'] and p != used['t1_filename']],
             'flair_candidates_not_selected': [
                 p
                 for p in (discovered.get('flair_filenames', []) + discovered.get('t2w_filenames', []))
                 if used['flair_or_t2_as_flair_filename'] and p != used['flair_or_t2_as_flair_filename']
             ],
+            'perf_candidates_not_selected': [p for p in discovered.get('perf_filenames', []) if used['perf_filename'] and p != used['perf_filename']],
+            'pet3d_candidates_not_selected': [p for p in discovered.get('pet3d_filenames', []) if used['pet3d_filename'] and p != used['pet3d_filename']],
+            # Ordered-but-not-capped modalities still expose non-selection accounting for completeness.
+            'nm_not_selected': [p for p in discovered.get('nm_filenames', []) if p not in used['nm_filenames']],
         }
 
         manifest = {
@@ -313,6 +318,7 @@ def process_session(
                 'truncate_DTI_to_first_n': 2,
                 'perf_select_single': True,
                 'pet_select_single': True,
+                'selection_tracking_enabled': True,
                 # For compatibility with older CLIs; not currently wired into antspymm.
                 'denoise_requested': bool(denoise) if denoise is not None else None,
             },
@@ -330,6 +336,7 @@ def process_session(
                 list(used['nm_filenames'])
             ),
             'excluded': excluded,
+            'selection_tracking': selection_tracking,
         }
 
         manifest_path = os.path.join(

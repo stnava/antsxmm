@@ -6,7 +6,7 @@ from typing import Any
 
 from .bids_entities import parse_entities
 from .run_id import normalize_run_id
-from .inputs import _as_path_list, _select_dti_filenames, _select_rsf_filenames
+from .inputs import _as_path_list, plan_session_inputs
 
 _SUFFIX_TO_MODALITY = {
     'T1w': 'T1w',
@@ -80,23 +80,23 @@ def build_execution_plan(session_data: dict[str, Any], output_root: str, project
         raise KeyError("session_data missing required key: 'date' (or alias 'sessionID')")
 
     canonical_run = _pick_primary_run(session_data)
-    t1_paths = _coerce_paths(session_data, 't1_filenames', 't1_filename')
+    plan_inputs = plan_session_inputs(session_data)
+    used = plan_inputs.get('used', {})
+    t1_paths = tuple([used['t1_filename']]) if used.get('t1_filename') else tuple()
     if not t1_paths:
         raise ValueError('build_execution_plan requires at least one T1w input')
 
-    flair_paths = _coerce_paths(session_data, 'flair_filenames', 'flair_filename')
-    if not flair_paths:
-        flair_paths = _coerce_paths(session_data, 't2w_filenames', 't2w_filename')
+    flair_paths = tuple([used['flair_or_t2_as_flair_filename']]) if used.get('flair_or_t2_as_flair_filename') else tuple()
 
     modality_inputs = {
-        'T1w': tuple(t1_paths[:1]),
-        'T2Flair': tuple(flair_paths[:1]),
-        'perf': tuple(_coerce_paths(session_data, 'perf_filenames', 'perf_filename')[:1]),
-        'pet3d': tuple(_coerce_paths(session_data, 'pet3d_filenames', 'pet3d_filename')[:1]),
-        'DTI': tuple(_select_dti_filenames(_coerce_paths(session_data, 'dti_filenames'))),
-        'rsfMRI': tuple(_select_rsf_filenames(_coerce_paths(session_data, 'rsf_filenames'))),
-        'NM2DMT': tuple(_coerce_paths(session_data, 'nm_filenames')[:11]),
-        'T1wHierarchical': tuple(t1_paths[:1]),
+        'T1w': t1_paths,
+        'T2Flair': flair_paths,
+        'perf': tuple([used['perf_filename']]) if used.get('perf_filename') else tuple(),
+        'pet3d': tuple([used['pet3d_filename']]) if used.get('pet3d_filename') else tuple(),
+        'DTI': tuple(used.get('dti_filenames', [])),
+        'rsfMRI': tuple(used.get('rsf_filenames', [])),
+        'NM2DMT': tuple(used.get('nm_filenames', [])),
+        'T1wHierarchical': t1_paths,
     }
 
     plan: list[ExecutionUnit] = []
