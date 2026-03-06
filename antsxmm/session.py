@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 
 from .inputs import plan_session_inputs, _extract_run_id_from_filename, _collect_discovered_inputs
 from .pymm_execution import generate_xmm_dataframe, run_xmm_mm_csv
+from .execution_plan import build_execution_plan, validate_execution_plan
 from .status import _ensure_dir, _write_json
 from .fingerprint import compute_input_fingerprint
 from .status import write_session_status
@@ -342,19 +343,27 @@ def process_session(
                 pet3d_filename=pet_path,
             )
 
+        execution_session_data = {
+            'subjectID': sub_id,
+            'sessionID': date_id,
+            'session_path': session_data.get('session_path'),
+            't1_filenames': [t1_path],
+            'flair_filenames': [flair_path] if flair_path else [],
+            'dti_filenames': list(dti_paths),
+            'rsf_filenames': list(rsf_paths),
+            'nm_filenames': list(nm_paths),
+            'perf_filenames': [perf_path] if perf_path else [],
+            'pet3d_filenames': [pet_path] if pet_path else [],
+        }
+
+        execution_plan = build_execution_plan(
+            execution_session_data,
+            output_root=output_root,
+            project_id=project_id,
+        )
+        validate_execution_plan(execution_plan)
         xmm_df = generate_xmm_dataframe(
-            {
-                'subjectID': sub_id,
-                'sessionID': date_id,
-                'session_path': session_data.get('session_path'),
-                't1_filenames': [t1_path],
-                'flair_filenames': [flair_path] if flair_path else [],
-                'dti_filenames': list(dti_paths),
-                'rsf_filenames': list(rsf_paths),
-                'nm_filenames': list(nm_paths),
-                'perf_filenames': [perf_path] if perf_path else [],
-                'pet3d_filenames': [pet_path] if pet_path else [],
-            },
+            execution_session_data,
             output_root=output_root,
             project_id=project_id,
         )
@@ -410,9 +419,6 @@ def process_session(
             srmodel_T1=None, srmodel_NM=None, srmodel_DTI=None,
         )
 
-
-        # Normalize antspymm output layout and filename prefixes to stable run-id form
-        session_out = Path(output_root) / project_id / sub_id / date_id
 
         result['success'] = True
         result['session_dir'] = os.path.join(output_root, project_id, sub_id, date_id)

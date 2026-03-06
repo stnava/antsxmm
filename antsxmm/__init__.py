@@ -19,3 +19,5 @@ __all__ = ['parse_antsxbids_layout', 'build_wide_table_from_mmwide', 'bind_mm_ro
 from .run_id import normalize_run_id
 from .bids_entities import parse_entities
 from .pymm_execution import generate_xmm_dataframe, run_xmm_mm_csv
+
+from .execution_plan import ExecutionUnit, build_execution_plan, validate_execution_plan
