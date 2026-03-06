@@ -1,64 +1,83 @@
 #!/usr/bin/env bash
-#SBATCH --nodes=1
+#SBATCH --job-name=antsxmm-subject
+#SBATCH --output=%x-%j.out
+#SBATCH --error=%x-%j.err
 
 set -euo pipefail
 
-: "${SLURM_ARRAY_TASK_ID:?missing SLURM_ARRAY_TASK_ID}"
-: "${SUBJECT_LIST:?missing SUBJECT_LIST}"
-: "${BIDS_ROOT:?missing BIDS_ROOT}"
-: "${OUT_ROOT:?missing OUT_ROOT}"
-: "${CONDA_ENV:?missing CONDA_ENV}"
+usage() {
+  cat >&2 <<'USAGE'
+Usage:
+  run_antsxmm_subject.slurm <BIDS_SUBJECT_DIR|BIDS_PROJECT_DIR> <OUTPUT_ROOT> [SUBJECT_LABEL] [SESSION_LABEL] [PROJECT_ID]
 
-line="$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "${SUBJECT_LIST}")"
-if [[ -z "${line}" ]]; then
-  echo "No manifest entry for task ${SLURM_ARRAY_TASK_ID}" >&2
-  exit 1
+Examples:
+  run_antsxmm_subject.slurm /data/BIDS/breacher/sub-001 /data/pymm
+  run_antsxmm_subject.slurm /data/BIDS/FPA sub-001 /data/pymm
+  run_antsxmm_subject.slurm /data/BIDS/FPA /data/pymm sub-001 ses-20230111 FPA
+
+Behavior:
+  - If the first argument is a subject directory (e.g. .../breacher/sub-001), the script derives:
+      BIDS_PROJECT_DIR=.../breacher
+      SUBJECT_LABEL=sub-001
+      PROJECT_ID=breacher
+  - If the first argument is a project directory (e.g. .../FPA), then SUBJECT_LABEL must be provided
+    as the third argument and PROJECT_ID defaults to the basename of the project directory unless
+    the optional PROJECT_ID argument is given explicitly.
+USAGE
+  exit 2
+}
+
+[[ $# -lt 2 ]] && usage
+
+INPUT_PATH="$1"
+OUTPUT_ROOT="$2"
+SUBJECT_LABEL="${3:-}"
+SESSION_LABEL="${4:-}"
+PROJECT_ID="${5:-}"
+
+if [[ ! -d "$INPUT_PATH" ]]; then
+  echo "ERROR: input path does not exist or is not a directory: $INPUT_PATH" >&2
+  exit 2
 fi
 
-IFS=$'\t' read -r STUDY SUBJECT_DIR SUBJECT_ID <<< "${line}"
+basename_no_trailing() {
+  local p="$1"
+  p="${p%/}"
+  basename "$p"
+}
 
-echo "----------------------------------------"
-echo "Task ID     : ${SLURM_ARRAY_TASK_ID}"
-echo "Study       : ${STUDY}"
-echo "Subject ID  : ${SUBJECT_ID}"
-echo "Subject dir : ${SUBJECT_DIR}"
-echo "BIDS root   : ${BIDS_ROOT}"
-echo "Out root    : ${OUT_ROOT}"
-echo "Host        : $(hostname)"
-echo "Start       : $(date)"
-echo "----------------------------------------"
+leaf="$(basename_no_trailing "$INPUT_PATH")"
 
-# Activate environment
-if command -v conda >/dev/null 2>&1; then
-  eval "$(conda shell.bash hook)"
-  conda activate "${CONDA_ENV}"
+if [[ "$leaf" == sub-* ]]; then
+  BIDS_PROJECT_DIR="$(cd "$(dirname "$INPUT_PATH")" && pwd)"
+  : "${SUBJECT_LABEL:=$leaf}"
+  if [[ -z "$PROJECT_ID" ]]; then
+    PROJECT_ID="$(basename_no_trailing "$BIDS_PROJECT_DIR")"
+  fi
+else
+  BIDS_PROJECT_DIR="$(cd "$INPUT_PATH" && pwd)"
+  if [[ -z "$SUBJECT_LABEL" ]]; then
+    echo "ERROR: SUBJECT_LABEL is required when INPUT_PATH is a project directory" >&2
+    usage
+  fi
+  if [[ -z "$PROJECT_ID" ]]; then
+    PROJECT_ID="$(basename_no_trailing "$BIDS_PROJECT_DIR")"
+  fi
 fi
 
-# Thread hygiene
-export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS="${SLURM_CPUS_PER_TASK:-1}"
-export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
-export OPENBLAS_NUM_THREADS=1
-export MKL_NUM_THREADS=1
-export VECLIB_MAXIMUM_THREADS=1
-export NUMEXPR_NUM_THREADS=1
+cmd=(
+  antsxmm run
+  "$BIDS_PROJECT_DIR"
+  "$OUTPUT_ROOT"
+  --project "$PROJECT_ID"
+  --participant-label "$SUBJECT_LABEL"
+)
 
-STUDY_BIDS_ROOT="${BIDS_ROOT}/${STUDY}"
-STUDY_OUT_ROOT="${OUT_ROOT}/${STUDY}"
+if [[ -n "$SESSION_LABEL" ]]; then
+  cmd+=(--session-label "$SESSION_LABEL")
+fi
 
-mkdir -p "${STUDY_OUT_ROOT}"
-
-# Adjust the antsxmm invocation here to match your installed CLI.
-# Common pattern: point antsxmm at the study BIDS root and restrict to one subject.
-#
-# Replace this block if your exact command differs.
-antsxmm run \
- "${STUDY_BIDS_ROOT}" \
- "${STUDY_OUT_ROOT}" \
-  --participant-label "${SUBJECT_ID#sub-}"
-
-status=$?
-
-echo "End   : $(date)"
-echo "Code  : ${status}"
-
-exit "${status}"
+printf 'Running:' >&2
+printf ' %q' "${cmd[@]}" >&2
+printf '\n' >&2
+exec "${cmd[@]}"
