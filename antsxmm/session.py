@@ -114,12 +114,18 @@ def process_session(
         'session_dir': None
     }
 
-    # Bind all shared runtime seams via antsxmm.core so unit tests can patch
-    # a single authoritative location.
+    # Resolve shared runtime seams late so tests can patch either antsxmm.session
+    # or antsxmm.core. Prefer explicit session-level overrides, then fall back to
+    # the core-owned defaults.
     import antsxmm.core as _core_api  # local import avoids import-time cycles
 
-    antspymm = _core_api.antspymm
-    ants = _core_api.ants
+    session_antspymm = globals().get('antspymm', types.SimpleNamespace())
+    session_ants = globals().get('ants', types.SimpleNamespace())
+
+    antspymm = session_antspymm if (
+        hasattr(session_antspymm, 'mm_csv') or hasattr(session_antspymm, 'generate_mm_dataframe')
+    ) else _core_api.antspymm
+    ants = session_ants if type(session_ants) is not types.SimpleNamespace else _core_api.ants
     sanitize_and_stage_file = _core_api.sanitize_and_stage_file
     build_wide_table_from_mmwide = _core_api.build_wide_table_from_mmwide
 
