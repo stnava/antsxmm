@@ -21,6 +21,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 from .inputs import plan_session_inputs, _extract_run_id_from_filename, _collect_discovered_inputs
+from .pymm_execution import generate_xmm_dataframe, run_xmm_mm_csv
 from .status import _ensure_dir, _write_json
 from .fingerprint import compute_input_fingerprint
 from .status import write_session_status
@@ -305,9 +306,9 @@ def process_session(
             print(f"[INFO] Wrote input manifest: {manifest_path}")
 
     try:
-        if not hasattr(antspymm, 'generate_mm_dataframe') or not hasattr(antspymm, 'mm_csv'):
+        if not hasattr(antspymm, 'mm_csv'):
             raise ModuleNotFoundError(
-                "antspymm is required to run antsxmm processing. Install antspymm (and ants) to execute the pipeline."
+                "antspymm.mm_csv is required to run antsxmm processing. Install antspymm (and ants) to execute the pipeline."
             )
 
         # Pre-execution check
@@ -320,25 +321,63 @@ def process_session(
             print("Processing: {} | {}".format(sub_id, date_id))
             print("Image UID: {}".format(image_uid))
 
-        # Run antspymm preprocessing
-        study_csv = antspymm.generate_mm_dataframe(
-            projectID=project_id,
-            subjectID=sub_id,
-            date=date_id,
-            imageUniqueID=image_uid,
-            modality='T1w',
-            source_image_directory=mock_source_dir,
-            output_image_directory=output_root,
-            t1_filename=t1_path,
-            flair_filename=flair_path,
-            rsf_filenames=rsf_paths,
-            dti_filenames=dti_paths,
-            nm_filenames=nm_paths,
-            perf_filename=perf_path,
-            pet3d_filename=pet_path
+        # Compatibility path: preserve antspymm.generate_mm_dataframe outputs if available,
+        # but let antsxmm own deterministic layout/prefix metadata.
+        compat_df = None
+        if hasattr(antspymm, 'generate_mm_dataframe'):
+            compat_df = antspymm.generate_mm_dataframe(
+                projectID=project_id,
+                subjectID=sub_id,
+                date=date_id,
+                imageUniqueID=image_uid,
+                modality='T1w',
+                source_image_directory=mock_source_dir,
+                output_image_directory=output_root,
+                t1_filename=t1_path,
+                flair_filename=flair_path,
+                rsf_filenames=rsf_paths,
+                dti_filenames=dti_paths,
+                nm_filenames=nm_paths,
+                perf_filename=perf_path,
+                pet3d_filename=pet_path,
+            )
+
+        xmm_df = generate_xmm_dataframe(
+            {
+                'subjectID': sub_id,
+                'sessionID': date_id,
+                'session_path': session_data.get('session_path'),
+                't1_filenames': [t1_path],
+                'flair_filenames': [flair_path] if flair_path else [],
+                'dti_filenames': list(dti_paths),
+                'rsf_filenames': list(rsf_paths),
+                'nm_filenames': list(nm_paths),
+                'perf_filenames': [perf_path] if perf_path else [],
+                'pet3d_filenames': [pet_path] if pet_path else [],
+            },
+            output_root=output_root,
+            project_id=project_id,
         )
-        
-        study_csv_clean = study_csv.dropna(axis=1)
+
+        if compat_df is None or getattr(compat_df, 'empty', False):
+            study_csv = xmm_df
+        else:
+            study_csv = compat_df.copy()
+            for col in xmm_df.columns:
+                if col.startswith('xmm_'):
+                    study_csv[col] = xmm_df[col]
+            for col in ('filename', 'flairid', 'perfid', 'pet3did', 'rsfid1', 'rsfid2', 'rsfid3', 'dtid1', 'dtid2', 'dtid3'):
+                if col not in study_csv.columns and col in xmm_df.columns:
+                    study_csv[col] = xmm_df[col]
+            for i in range(1, 12):
+                col = f'nmid{i}'
+                if col not in study_csv.columns and col in xmm_df.columns:
+                    study_csv[col] = xmm_df[col]
+            for col in ('projectID', 'subjectID', 'date', 'imageID', 'modality', 'sourcedir', 'outputdir'):
+                if col not in study_csv.columns and col in xmm_df.columns:
+                    study_csv[col] = xmm_df[col]
+
+        study_csv_clean = study_csv.dropna(axis=1, how='all')
 
         try:
             template_path = antspymm.get_data("PPMI_template0", target_extension=".nii.gz")
@@ -358,8 +397,9 @@ def process_session(
         if verbose:
             print("Running antspymm.mm_csv()...")
 
-        antspymm.mm_csv(
+        run_xmm_mm_csv(
             study_csv_clean,
+            antspymm,
             mysep=separator,
             dti_motion_correct=dti_moco,
             dti_denoise=denoise_dti,
@@ -367,7 +407,7 @@ def process_session(
             normalization_template_output='ppmi',
             normalization_template_transform_type='antsRegistrationSyNQuickRepro[s]',
             normalization_template_spacing=[1,1,1],
-            srmodel_T1=None, srmodel_NM=None, srmodel_DTI=None
+            srmodel_T1=None, srmodel_NM=None, srmodel_DTI=None,
         )
 
 
