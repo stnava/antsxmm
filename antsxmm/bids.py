@@ -87,11 +87,11 @@ def parse_antsxbids_layout(bids_root):
             data['rsf_filenames'] = rsf_files
 
             # 4. Neuromelanin
-            nm_dir = ses_dir / 'melanin'
             nm_files = []
-            if nm_dir.exists():
-                nm_files = _sorted_glob(nm_dir, ["*NM.nii.gz", "*NM.nii"])
-            data['nm_filenames'] = nm_files
+            for nm_dir in (ses_dir / 'melanin', ses_dir / 'anat'):
+                if nm_dir.exists():
+                    nm_files.extend(_sorted_glob(nm_dir, ["*NM.nii.gz", "*NM.nii"]))
+            data['nm_filenames'] = sorted(set(nm_files))
 
             # 5. Perfusion
             perf_dir = ses_dir / 'perf'

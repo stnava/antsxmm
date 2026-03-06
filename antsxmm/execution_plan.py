@@ -15,6 +15,8 @@ _SUFFIX_TO_MODALITY = {
     'dwi': 'DTI',
     'bold': 'rsfMRI',
     'asl': 'perf',
+    'pet': 'pet3d',
+    'PET': 'pet3d',
     'NM': 'NM2DMT',
     'nm': 'NM2DMT',
 }

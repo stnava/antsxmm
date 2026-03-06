@@ -120,8 +120,9 @@ def run_study(
     layout_df = parse_antsxbids_layout(bids_dir)
 
     if participant_label:
-        layout_df = layout_df[layout_df["subjectID"].astype(str) == str(participant_label)]
-        logging.info(f"Filtering for subject: {participant_label}")
+        normalized_participant_label = str(participant_label).rstrip('/\\')
+        layout_df = layout_df[layout_df["subjectID"].astype(str) == normalized_participant_label]
+        logging.info(f"Filtering for subject: {normalized_participant_label}")
 
     if session_label:
         # Cast to string to avoid pandas type mismatch with numeric session IDs

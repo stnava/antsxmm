@@ -1,20 +1,16 @@
 from __future__ import annotations
 
 from pathlib import Path
-import re
 from typing import Dict, List, Tuple
+
+from .bids_entities import parse_entities
+from .execution_plan import modality_from_path
+from .run_id import normalize_run_id
 
 
 def _extract_run(path: Path) -> str:
-    m = re.search(r"run-(\d+)", path.name)
-    if m:
-        return f"run-{int(m.group(1)):02d}"
-
-    m = re.search(r"(?:^|_)(?:r)(\d+)(?:[_.]|$)", path.name)
-    if m:
-        return f"run-{int(m.group(1)):02d}"
-
-    return "run-01"
+    entities = parse_entities(path.name)
+    return normalize_run_id(entities.get('run'))
 
 
 def predict_tree(subject_dir: str | Path) -> tuple[str, str, Dict[str, List[Tuple[str, str]]]]:
@@ -32,7 +28,6 @@ def predict_tree(subject_dir: str | Path) -> tuple[str, str, Dict[str, List[Tupl
     """
     subject_dir = Path(subject_dir)
 
-    # Expect BIDS-ish: <bids>/<project>/<subject>
     if len(subject_dir.parts) < 3:
         raise ValueError(f"subject_dir must be a BIDS subject directory, got: {subject_dir}")
 
@@ -44,32 +39,17 @@ def predict_tree(subject_dir: str | Path) -> tuple[str, str, Dict[str, List[Tupl
     tree: Dict[str, List[Tuple[str, str]]] = {}
 
     for ses in sessions:
-        runs: List[Tuple[str, str]] = []
+        runs_set: set[Tuple[str, str]] = set()
 
         for f in ses.rglob("*.nii.gz"):
+            modality = modality_from_path(f.name)
+            if modality is None:
+                continue
             run_id = _extract_run(f)
+            runs_set.add((modality, run_id))
+            if modality == "T1w":
+                runs_set.add(("T1wHierarchical", run_id))
 
-            if "T1w" in f.name:
-                runs.append(("T1w", run_id))
-                runs.append(("T1wHierarchical", run_id))
-
-            if "_dwi" in f.name:
-                runs.append(("DTI", run_id))
-
-            if "_bold" in f.name:
-                runs.append(("rsfMRI", run_id))
-
-            if "_asl" in f.name:
-                runs.append(("perf", run_id))
-
-            # FLAIR (passed to antspymm as flair_filename)
-            if "FLAIR" in f.name or "_flair" in f.name.lower():
-                runs.append(("T2Flair", run_id))
-
-            # PET (passed to antspymm as pet3d_filename)
-            if "_pet" in f.name.lower() or f.parent.name.lower() == "pet":
-                runs.append(("pet3d", run_id))
-
-        tree[ses.name] = runs
+        tree[ses.name] = sorted(runs_set, key=lambda x: (x[1], x[0]))
 
     return project, subject, tree
