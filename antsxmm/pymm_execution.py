@@ -47,29 +47,98 @@ def _images_for_modality(row: pd.Series, modality: str) -> list[str]:
     return out
 
 
+
+from contextlib import contextmanager
+from typing import Any
+
+
 @contextmanager
 def _patched_docsamson(antspymm_module: Any, study_df: pd.DataFrame):
-    original = getattr(antspymm_module, 'docsamson', None)
+    """
+    Patch the exact docsamson symbol resolved by antspymm.mm_csv.
 
-    def deterministic_docsamson(locmod, studycsv, outputdir, projid, sid, dtid, mysep, t1iid=None, verbose=True):
+    The prior implementation only patched `antspymm_module.docsamson`, but
+    mm_csv resolves `docsamson` from its own module globals. If mm_csv was
+    imported from a submodule (e.g. antspymm.mm), patching the package
+    attribute is insufficient and the legacy filename-derived layout still
+    executes.
+    """
+    mm_csv_fn = getattr(antspymm_module, "mm_csv", None)
+    if mm_csv_fn is None:
+        raise ModuleNotFoundError("antspymm.mm_csv is required")
+
+    mm_csv_globals = getattr(mm_csv_fn, "__globals__", None)
+    can_patch_globals = isinstance(mm_csv_globals, dict)
+
+    original_global_docsamson = mm_csv_globals.get("docsamson", None) if can_patch_globals else None
+    had_module_attr = hasattr(antspymm_module, "docsamson")
+    original_module_docsamson = getattr(antspymm_module, "docsamson", None)
+
+    def deterministic_docsamson(
+        locmod,
+        studycsv,
+        outputdir,
+        projid,
+        sid,
+        dtid,
+        mysep,
+        t1iid=None,
+        verbose=True,
+    ):
         row = study_df.iloc[0]
-        prefix_key = f'xmm_prefix_{locmod}'
-        prefix = row.get(prefix_key)
-        if prefix is None and locmod == 'T1wHierarchical':
-            prefix = row.get('xmm_prefix_T1wHierarchical')
-        images = _images_for_modality(row, locmod)
-        return {'modality': locmod, 'outprefix': prefix, 'images': images}
 
-    setattr(antspymm_module, 'docsamson', deterministic_docsamson)
+        prefix_key = f"xmm_prefix_{locmod}"
+        prefix = row.get(prefix_key)
+        if prefix is None and locmod == "T1wHierarchical":
+            prefix = row.get("xmm_prefix_T1wHierarchical")
+
+        if prefix is None:
+            raise KeyError(f"Missing deterministic prefix for modality {locmod}")
+
+        images = _images_for_modality(row, locmod)
+
+        if verbose:
+            print(
+                {
+                    "modality": locmod,
+                    "outprefix": prefix,
+                    "images": images,
+                    "patched_by": "antsxmm",
+                }
+            )
+
+        return {
+            "modality": locmod,
+            "outprefix": prefix,
+            "images": images,
+        }
+
+    # Critical: patch the symbol mm_csv actually resolves when that global namespace
+    # is available. Mocks/builtins may not expose a writable __globals__ dict.
+    if can_patch_globals:
+        mm_csv_globals["docsamson"] = deterministic_docsamson
+
+    # Also patch the package/module attribute for compatibility / introspection.
+    setattr(antspymm_module, "docsamson", deterministic_docsamson)
+
     try:
         yield
     finally:
-        if original is not None:
-            setattr(antspymm_module, 'docsamson', original)
+        if can_patch_globals:
+            if original_global_docsamson is None:
+                mm_csv_globals.pop("docsamson", None)
+            else:
+                mm_csv_globals["docsamson"] = original_global_docsamson
+
+        if had_module_attr:
+            setattr(antspymm_module, "docsamson", original_module_docsamson)
         else:
-            delattr(antspymm_module, 'docsamson')
+            try:
+                delattr(antspymm_module, "docsamson")
+            except AttributeError:
+                pass
 
-
+            
 def run_xmm_mm_csv(study_df: pd.DataFrame, antspymm_module: Any, **mm_csv_kwargs: Any):
     if not hasattr(antspymm_module, 'mm_csv'):
         raise ModuleNotFoundError('antspymm.mm_csv is required to execute antsxmm processing')

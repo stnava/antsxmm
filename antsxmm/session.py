@@ -3,15 +3,20 @@ import math
 import types
 import pandas as pd
 
-try:  # optional dependency for lightweight installs / unit tests
-    import antspymm  # type: ignore
-except ModuleNotFoundError:  # pragma: no cover
-    antspymm = types.SimpleNamespace()  # tests can monkeypatch attributes
+from . import core as _core_api
 
-try:  # optional dependency for lightweight installs / unit tests
-    import ants  # type: ignore
-except ModuleNotFoundError:  # pragma: no cover
-    ants = types.SimpleNamespace()
+# Compatibility aliases: keep these names importable from antsxmm.session,
+# but source them from the single authoritative runtime owner in antsxmm.core.
+antspymm = _core_api.antspymm
+ants = _core_api.ants
+sanitize_and_stage_file = _core_api.sanitize_and_stage_file
+build_wide_table_from_mmwide = _core_api.build_wide_table_from_mmwide
+
+_INITIAL_ANTSPYMM_ALIAS = antspymm
+_INITIAL_ANTS_ALIAS = ants
+_INITIAL_SANITIZE_ALIAS = sanitize_and_stage_file
+_INITIAL_BUILD_WIDE_TABLE_ALIAS = build_wide_table_from_mmwide
+
 import tempfile
 import shutil
 import re
@@ -26,8 +31,7 @@ from .execution_plan import build_execution_plan, validate_execution_plan
 from .status import _ensure_dir, _write_json
 from .fingerprint import compute_input_fingerprint
 from .status import write_session_status
-from .staging import extract_image_id, get_modality_variant, sanitize_and_stage_file
-from .wide_table import build_wide_table_from_mmwide
+from .staging import extract_image_id, get_modality_variant
 
 def print_expected_tree(output_root, project_id, sub_id, date_id, image_uid, 
                         flair_info, rsf_infos, dti_infos, nm_infos, perf_info, pet_info, sep="_"):
@@ -111,10 +115,20 @@ def process_session(
         'wide_df': None,
         'session_dir': None
     }
-    # Bind helpers via antsxmm.core so unit tests can patch them reliably.
+
+    # Bind shared runtime seams with compatibility for tests that patch either
+    # antsxmm.core.* or antsxmm.session.*.
     import antsxmm.core as _core_api  # local import avoids import-time cycles
-    sanitize_and_stage_file = _core_api.sanitize_and_stage_file
-    build_wide_table_from_mmwide = _core_api.build_wide_table_from_mmwide
+
+    session_antspymm = globals().get("antspymm", _INITIAL_ANTSPYMM_ALIAS)
+    session_ants = globals().get("ants", _INITIAL_ANTS_ALIAS)
+    session_sanitize = globals().get("sanitize_and_stage_file", _INITIAL_SANITIZE_ALIAS)
+    session_build_wide = globals().get("build_wide_table_from_mmwide", _INITIAL_BUILD_WIDE_TABLE_ALIAS)
+
+    antspymm = session_antspymm if session_antspymm is not _INITIAL_ANTSPYMM_ALIAS else _core_api.antspymm
+    ants = session_ants if session_ants is not _INITIAL_ANTS_ALIAS else _core_api.ants
+    sanitize_and_stage_file = session_sanitize if session_sanitize is not _INITIAL_SANITIZE_ALIAS else _core_api.sanitize_and_stage_file
+    build_wide_table_from_mmwide = session_build_wide if session_build_wide is not _INITIAL_BUILD_WIDE_TABLE_ALIAS else _core_api.build_wide_table_from_mmwide
 
 
     # 1. Plan inputs (selection/truncation) + compute fingerprint for resumability
