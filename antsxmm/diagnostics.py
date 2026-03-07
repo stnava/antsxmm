@@ -113,8 +113,6 @@ def inspect_input_path(path: str | Path) -> dict[str, Any]:
         return entry
 
     entry['sidecars_present'] = sidecar_paths_for_nifti(s)
-    if not entry['sidecars_present']:
-        entry['reasons'].append('no_sidecars_found')
     entry['usable'] = True
     entry['reasons'].append('usable_candidate')
     return entry
@@ -301,8 +299,6 @@ def diagnose_bids_tree(bids_root: str | Path) -> dict[str, Any]:
         suspicious_reasons.append('broken_symlink')
     if json_without_image:
         suspicious_reasons.append('json_without_image')
-    if images_without_json:
-        suspicious_reasons.append('image_without_json')
     if not image_paths and json_paths:
         suspicious_reasons.append('json_only_tree')
     if not subjects:
