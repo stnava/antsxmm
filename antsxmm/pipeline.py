@@ -345,24 +345,78 @@ def tree_cmd(path: str, create: bool) -> None:
                 d = _Path("pymm") / project / subject / ses / modality / run
                 d.mkdir(parents=True, exist_ok=True)
 
-@main.command("validate", short_help="Check processed outputs.")
-@click.argument("path", type=click.Path(exists=True))
-@click.option("--pymm-dir", default="pymm", help="Path to pymm output root.")
-def validate_cmd(path: str, pymm_dir: str) -> None:
-    """✅ Validate processed outputs against expected structure and files."""
+@main.command("validate", short_help="Validate processed outputs against a BIDS project.")
+@click.argument("input_bids_project", type=click.Path(exists=True, file_okay=False, path_type=Path), metavar="INPUT_BIDS_PROJECT")
+@click.argument("output_dir", required=False, type=click.Path(file_okay=False, path_type=Path), metavar="OUTPUT_DIR")
+@click.option("--pymm-dir", "legacy_output_dir", type=click.Path(file_okay=False, path_type=Path), help="Deprecated alias for OUTPUT_DIR.")
+@click.option("--participant-label", "participant_labels", multiple=True, help="Restrict validation to one or more subjects (repeatable or comma-separated, e.g. sub-01 or --participant-label sub-01 --participant-label sub-02).")
+def validate_cmd(input_bids_project: Path, output_dir: Path | None, legacy_output_dir: Path | None, participant_labels: tuple[str, ...]) -> None:
+    """
+    Validate processed antsxmm outputs against one BIDS project.
+
+    
+    INPUT_BIDS_PROJECT should point to one project directory such as
+    BIDS/breacher. OUTPUT_DIR should point to the processed antsxmm
+    output root such as pymm or Processed.
+
+    
+    The command predicts the expected
+    <project>/<subject>/<session>/<modality>/<run> directories from the
+    BIDS tree and compares them to what exists under OUTPUT_DIR.
+
+    
+    It reports, per session:
+      OK expected outputs found
+      missing expected outputs
+      missing expected mmwide.csv files
+      unexpected output directories present
+    """
     try:
         from .validate import validate_project
     except ImportError:
         from antsxmm.validate import validate_project
 
-    results = validate_project(path, pymm_dir=pymm_dir)
+    resolved_output_dir = output_dir or legacy_output_dir or Path("pymm")
+    if output_dir is not None and legacy_output_dir is not None and output_dir != legacy_output_dir:
+        raise click.UsageError("Provide OUTPUT_DIR positionally or via --pymm-dir, not both with different values.")
+
+    if legacy_output_dir is not None and output_dir is None:
+        click.echo("[deprecated] --pymm-dir is supported for compatibility; prefer: antsxmm validate INPUT_BIDS_PROJECT OUTPUT_DIR", err=True)
+
+    results = validate_project(
+        input_bids_project,
+        output_dir=resolved_output_dir,
+        participant_labels=participant_labels or None,
+    )
+
+    total_missing = 0
+    total_missing_mmwide = 0
+    total_unexpected = 0
+    total_ok = 0
+
     for session_key, res in results.items():
+        total_missing += len(res.missing)
+        total_unexpected += len(res.unexpected)
+        total_ok += len(res.ok)
+        total_missing_mmwide += len(res.missing_mmwide_files)
         click.secho(f"Session: {session_key}", bold=True)
-        if res.missing:
-            click.secho(f"  Missing: {len(res.missing)} files", fg="red")
-        if res.ok:
-            click.secho(f"  OK: {len(res.ok)} files", fg="green")
+        click.secho(f"  OK: {len(res.ok)}", fg="green")
+        click.secho(f"  Missing: {len(res.missing)}", fg="red" if res.missing else None)
+        click.secho(f"  Unexpected: {len(res.unexpected)}", fg="yellow" if res.unexpected else None)
+        click.secho(f"  Missing mmwide.csv: {len(res.missing_mmwide_files)}", fg="red" if res.missing_mmwide_files else None)
+        for missing_file in res.missing_mmwide_files:
+            click.echo(f"    missing mmwide.csv: {missing_file}")
         print("")
+
+    if participant_labels:
+        click.echo(f"participant_filter={','.join(participant_labels)}")
+
+    click.echo(
+        f"Summary: sessions={len(results)} ok={total_ok} missing={total_missing} missing_mmwide={total_missing_mmwide} unexpected={total_unexpected} output_root={resolved_output_dir}"
+    )
+
+    if total_missing or total_unexpected or total_missing_mmwide:
+        raise SystemExit(1)
 
 @main.command("aggregate", short_help="Aggregate merged session csv files into one study table.")
 @click.argument("root", type=click.Path(exists=True, file_okay=False, path_type=Path))
