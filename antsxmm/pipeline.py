@@ -14,6 +14,12 @@ except ImportError:
 import click
 from tqdm import tqdm
 
+try:
+    from .aggregate import aggregate_merged_tables, DEFAULT_PATTERN, DEFAULT_PREFER
+except ImportError:
+    from antsxmm.aggregate import aggregate_merged_tables, DEFAULT_PATTERN, DEFAULT_PREFER
+
+
 # --- Logging Configuration ---
 def setup_logging(verbose: bool):
     """Configures logging and silences known library noise."""
@@ -357,6 +363,31 @@ def validate_cmd(path: str, pymm_dir: str) -> None:
         if res.ok:
             click.secho(f"  OK: {len(res.ok)} files", fg="green")
         print("")
+
+@main.command("aggregate", short_help="Aggregate merged session csv files into one study table.")
+@click.argument("root", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("--pattern", default=DEFAULT_PATTERN, show_default=True, help="Glob pattern for merged csv discovery.")
+@click.option("--output", required=True, type=click.Path(path_type=Path), help="Output study table path (.csv or .parquet).")
+@click.option("--state", "state_path", type=click.Path(path_type=Path), help="Incremental state manifest path.")
+@click.option("--rejects", "rejects_path", type=click.Path(path_type=Path), help="Rejected file report path.")
+@click.option("--incremental/--no-incremental", default=True, show_default=True, help="Reuse prior aggregate output and only refresh affected entities.")
+@click.option("--prefer", type=click.Choice(["processed-first", "pymm-first", "newest", "largest", "error"]), default=DEFAULT_PREFER, show_default=True, help="Duplicate resolution policy for the same project/subject/session/modality/run.")
+def aggregate_cmd(root: Path, output: Path, pattern: str, state_path: Path | None, rejects_path: Path | None, incremental: bool, prefer: str) -> None:
+    """📚 Aggregate *mmwidemerged.csv files across a mixed tree into one study table."""
+    result = aggregate_merged_tables(
+        root=root,
+        output=output,
+        pattern=pattern,
+        state_path=state_path,
+        rejects_path=rejects_path,
+        incremental=incremental,
+        prefer=prefer,
+    )
+    click.echo(f"aggregate scanned={result.scanned} read={result.read} rows={result.rows_written} rejected={result.rejected} incremental={'yes' if result.incremental else 'no'} reused_existing={'yes' if result.reused_existing else 'no'}")
+    click.echo(f"output={result.output_path}")
+    click.echo(f"state={result.state_path}")
+    click.echo(f"rejects={result.rejects_path}")
+
 
 def _run_pipeline_logic(
     bids_dir: str,
