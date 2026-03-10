@@ -354,9 +354,19 @@ def validate_cmd(input_bids_project: Path, output_dir: Path, participant_label: 
     OUTPUT_DIR is the processed antsxmm root such as pymm or Processed.
     """
     try:
-        from .validate import validate_project, summarize_results, build_summary_table, build_missing_percentage_table
+        from .validate import (
+            validate_project,
+            summarize_results,
+            build_session_modality_table,
+            build_missing_percentage_table,
+        )
     except ImportError:
-        from antsxmm.validate import validate_project, summarize_results, build_summary_table, build_missing_percentage_table
+        from antsxmm.validate import (
+            validate_project,
+            summarize_results,
+            build_session_modality_table,
+            build_missing_percentage_table,
+        )
 
     results = validate_project(
         input_bids_project,
@@ -364,7 +374,7 @@ def validate_cmd(input_bids_project: Path, output_dir: Path, participant_label: 
         participant_labels=participant_label or None,
     )
     summary = summarize_results(results)
-    rows = build_summary_table(results)
+    rows = build_session_modality_table(results)
     missing_pct_rows = build_missing_percentage_table(results)
 
     click.secho("Validation summary", fg="cyan", bold=True)
@@ -378,16 +388,18 @@ def validate_cmd(input_bids_project: Path, output_dir: Path, participant_label: 
     click.echo("")
 
     click.secho("Per-session table", fg="cyan", bold=True)
-    click.echo(f"{'Session':<40} {'Status':<8} {'OK':>4} {'Missing':>8} {'Unexpected':>11} {'MissingCSV':>11}  Missing modalities")
-    click.echo(f"{'-' * 40} {'-' * 8} {'-' * 4} {'-' * 8} {'-' * 11} {'-' * 11}  {'-' * 18}")
+    click.echo(
+        f"{'subject_id':<14} {'session_id':<20} {'modality':<18} {'run_id':<10} {'status':<12} expected_mmwide_csv"
+    )
+    click.echo(
+        f"{'-' * 14} {'-' * 20} {'-' * 18} {'-' * 10} {'-' * 12} {'-' * 20}"
+    )
     for row in rows:
-        status_color = "green" if row.status == "clean" else "yellow"
-        missing_modalities = ",".join(row.missing_modalities) if row.missing_modalities else "-"
+        status_color = "green" if row.status == "OK" else "yellow"
         click.secho(
-            f"{row.session_key:<40} {row.status:<8} {row.ok_count:>4} {row.missing_count:>8} {row.unexpected_count:>11} {row.missing_mmwide_count:>11}  {missing_modalities}",
+            f"{row.subject_id:<14} {row.session_id:<20} {row.modality:<18} {row.run_id:<10} {row.status:<12} {row.expected_mmwide_csv or '-'}",
             fg=status_color,
         )
-
 
     click.echo("")
     click.secho("Missing percentage table", fg="cyan", bold=True)

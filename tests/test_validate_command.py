@@ -5,7 +5,7 @@ from click.testing import CliRunner
 from antsxmm.pipeline import main
 from antsxmm.validate import (
     build_missing_percentage_table,
-    build_summary_table,
+    build_session_modality_table,
     summarize_results,
     validate_project,
 )
@@ -83,8 +83,8 @@ def test_validate_participant_filter_and_summary(tmp_path):
     summary = summarize_results(results)
     assert summary.session_count == 1
     assert summary.clean_session_count == 1
-    rows = build_summary_table(results)
-    assert rows[0].status == "clean"
+    rows = build_session_modality_table(results)
+    assert rows[0].status == "OK"
 
 
 def test_missing_percentage_table(tmp_path):
@@ -112,6 +112,25 @@ def test_missing_percentage_table(tmp_path):
     assert t1w_row.missing_mmwide_pct == 50.0
 
 
+def test_build_session_modality_table_prefers_missing_csv_status(tmp_path):
+    bids_proj = tmp_path / "BIDS" / "breacher"
+    subj = bids_proj / "sub-0102" / "ses-initial-day1"
+    (subj / "anat").mkdir(parents=True)
+    (subj / "anat" / "sub-0102_ses-initial-day1_T1w.nii.gz").touch()
+
+    output_dir = tmp_path / "pymm"
+    _mk_expected_outputs(output_dir, "breacher", "sub-0102", "ses-initial-day1", [("T1w", "run-01")])
+
+    results = validate_project(bids_proj, output_dir)
+    rows = build_session_modality_table(results)
+    t1w_row = next(row for row in rows if row.modality == "T1w")
+    assert t1w_row.subject_id == "sub-0102"
+    assert t1w_row.session_id == "ses-initial-day1"
+    assert t1w_row.run_id == "run-01"
+    assert t1w_row.status == "MISSING_CSV"
+    assert t1w_row.expected_mmwide_csv.endswith("breacher/sub-0102/ses-initial-day1/T1w/run-01/breacher+sub-0102+ses-initial-day1+T1w+run-01+mmwide.csv")
+
+
 def test_validate_cli_prints_summary_and_tables(tmp_path):
     bids_proj = tmp_path / "BIDS" / "breacher"
     subj = bids_proj / "sub-9162" / "ses-followup-day2"
@@ -127,7 +146,15 @@ def test_validate_cli_prints_summary_and_tables(tmp_path):
     assert "Validation summary" in result.output
     assert "Per-session table" in result.output
     assert "Missing percentage table" in result.output
-    assert "Missing modalities" in result.output
-    assert "sub-9162/ses-followup-day2" in result.output
+    assert "subject_id" in result.output
+    assert "session_id" in result.output
+    assert "modality" in result.output
+    assert "run_id" in result.output
+    assert "status" in result.output
+    assert "expected_mmwide_csv" in result.output
+    assert "sub-9162" in result.output
+    assert "ses-followup-day2" in result.output
     assert "T1w" in result.output
+    assert "run-01" in result.output
+    assert "MISSING_CSV" in result.output
     assert "100.0%" in result.output

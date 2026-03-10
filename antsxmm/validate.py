@@ -39,6 +39,16 @@ class ValidationTableRow:
 
 
 @dataclass(frozen=True)
+class SessionModalityRow:
+    subject_id: str
+    session_id: str
+    modality: str
+    run_id: str
+    status: str
+    expected_mmwide_csv: str
+
+
+@dataclass(frozen=True)
 class MissingPercentageRow:
     modality: str
     expected_count: int
@@ -72,6 +82,11 @@ def _expected_mmwide_path(
 def _extract_modality_from_relpath(relpath: str) -> str:
     parts = Path(relpath).parts
     return parts[3] if len(parts) >= 5 else "unknown"
+
+
+def _extract_run_from_relpath(relpath: str) -> str:
+    parts = Path(relpath).parts
+    return parts[4] if len(parts) >= 5 else "unknown"
 
 
 def validate_project(
@@ -198,6 +213,50 @@ def build_summary_table(results: Dict[str, ValidationResult]) -> List[Validation
                 status=status,
             )
         )
+    return rows
+
+
+def build_session_modality_table(results: Dict[str, ValidationResult]) -> List[SessionModalityRow]:
+    rows: List[SessionModalityRow] = []
+    for session_key in sorted(results):
+        subject_id, session_id = session_key.split("/", 1)
+        res = results[session_key]
+
+        ok_by_key = {
+            (_extract_modality_from_relpath(relpath), _extract_run_from_relpath(relpath))
+            for relpath in res.ok
+        }
+        missing_dir_by_key = {
+            (_extract_modality_from_relpath(relpath), _extract_run_from_relpath(relpath))
+            for relpath in res.missing
+        }
+
+        expected_mmwide_by_key: dict[tuple[str, str], str] = {}
+        missing_mmwide_by_key: set[tuple[str, str]] = set()
+
+        for relpath in res.missing_mmwide_files:
+            key = (_extract_modality_from_relpath(relpath), _extract_run_from_relpath(relpath))
+            expected_mmwide_by_key[key] = relpath
+            missing_mmwide_by_key.add(key)
+
+        for modality, run_id in sorted(ok_by_key | missing_dir_by_key | set(expected_mmwide_by_key.keys())):
+            expected_mmwide_csv = expected_mmwide_by_key.get(key := (modality, run_id), "")
+            if key in missing_dir_by_key:
+                status = "MISSING"
+            elif key in missing_mmwide_by_key:
+                status = "MISSING_CSV"
+            else:
+                status = "OK"
+            rows.append(
+                SessionModalityRow(
+                    subject_id=subject_id,
+                    session_id=session_id,
+                    modality=modality,
+                    run_id=run_id,
+                    status=status,
+                    expected_mmwide_csv=expected_mmwide_csv,
+                )
+            )
     return rows
 
 
