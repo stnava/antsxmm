@@ -351,9 +351,9 @@ def tree_cmd(path: str, create: bool) -> None:
 )
 @click.option(
     "--pattern",
-    default="*mmwidemerged.csv",
+    default="*mmwidemerged*.csv",
     show_default=True,
-    help="Recursive glob pattern used to discover per-run merged tables under ROOT.",
+    help="Recursive glob pattern used to discover per-run merged tables under ROOT. The default also matches duplicate copies like *mmwidemerged 2.csv.",
 )
 @click.option(
     "--state",
@@ -389,7 +389,12 @@ def aggregate_cmd(
     prefer: str,
     incremental: bool,
 ) -> None:
-    """Aggregate discovered *mmwidemerged.csv files into one study-level table.
+    """Aggregate discovered *mmwidemerged*.csv files into one study-level table.
+
+    This supports both nested layouts like ROOT/pymm/<project>/sub-.../ses-.../
+    <modality>/run-.../*.csv and flat drop-zones that only contain the merged
+    CSV filenames themselves. Duplicate Finder-style copies such as
+    `...+mmwidemerged 2.csv` are normalized back to the same entity.
 
     ROOT is a directory that contains one or more source roots such as pymm/
     and Processed/. Each discovered file must resolve to a unique entity using

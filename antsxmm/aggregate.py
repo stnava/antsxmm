@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -8,7 +9,7 @@ from typing import Any
 import pandas as pd
 
 
-DEFAULT_PATTERN = "*mmwidemerged.csv"
+DEFAULT_PATTERN = "*mmwidemerged*.csv"
 DEFAULT_PREFER = "processed-first"
 PREFER_CHOICES = {"processed-first", "pymm-first", "newest", "largest", "error"}
 
@@ -83,7 +84,16 @@ def _parse_from_path(root: Path, path: Path) -> dict[str, str | None]:
     modality = parts[subject_idx + 2] if subject_idx is not None and subject_idx + 2 < len(parts) else None
     run_id = parts[subject_idx + 3] if subject_idx is not None and subject_idx + 3 < len(parts) and parts[subject_idx + 3].startswith("run-") else None
     project_id = parts[subject_idx - 1] if subject_idx is not None and subject_idx >= 1 else None
-    source_root = parts[subject_idx - 2] if subject_idx is not None and subject_idx >= 2 else None
+
+    source_root = None
+    if subject_idx is not None and subject_idx >= 2:
+        source_root = parts[subject_idx - 2]
+    else:
+        for part in parts[:-1]:
+            lowered = part.lower()
+            if lowered in {"processed", "pymm", "pymms"}:
+                source_root = part
+                break
 
     return {
         "project_id": project_id,
@@ -96,10 +106,14 @@ def _parse_from_path(root: Path, path: Path) -> dict[str, str | None]:
 
 
 
+def _normalized_identity_stem(path: Path) -> str:
+    stem = path.stem
+    match = re.match(r"^(.*?mmwidemerged)(?:\s+\d+|\s*\(\d+\))?$", stem)
+    return match.group(1) if match else stem
+
+
 def _parse_from_filename(path: Path) -> dict[str, str | None]:
-    stem = path.name
-    if stem.endswith(".csv"):
-        stem = stem[:-4]
+    stem = _normalized_identity_stem(path)
     tokens = stem.split("+")
     if len(tokens) < 6:
         return {
