@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .models import DiscoveredRun, RunKey, SessionKey
+from .schema_profiles import get_schema_profile
 
 
 @dataclass(frozen=True)
@@ -13,6 +14,8 @@ class CsvValidation:
     exists: bool
     is_valid: bool | None
     issue: str | None
+    columns: tuple[str, ...] = ()
+    row_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -64,7 +67,7 @@ def _load_status_file(path: Path) -> dict | None:
         return {"_invalid": True, "path": str(path)}
 
 
-def validate_mmwide_csv(path: Path) -> CsvValidation:
+def validate_mmwide_csv(path: Path, *, modality: str | None = None) -> CsvValidation:
     if not path.exists():
         return CsvValidation(exists=False, is_valid=None, issue="missing")
     try:
@@ -73,11 +76,21 @@ def validate_mmwide_csv(path: Path) -> CsvValidation:
             header = next(reader, None)
             if not header:
                 return CsvValidation(exists=True, is_valid=False, issue="empty_header")
-            row = next(reader, None)
-            if row is None:
-                return CsvValidation(exists=True, is_valid=False, issue="no_rows")
-            if not any(str(col).strip() for col in header):
-                return CsvValidation(exists=True, is_valid=False, issue="blank_header")
+            normalized_header = tuple(str(col).strip() for col in header)
+            if not any(normalized_header):
+                return CsvValidation(exists=True, is_valid=False, issue="blank_header", columns=normalized_header)
+            lowered_nonblank = [col.lower() for col in normalized_header if col]
+            if len(lowered_nonblank) != len(set(lowered_nonblank)):
+                return CsvValidation(exists=True, is_valid=False, issue="duplicate_columns", columns=normalized_header)
+            rows = list(reader)
+            if not rows:
+                return CsvValidation(exists=True, is_valid=False, issue="no_rows", columns=normalized_header)
+            profile = get_schema_profile(modality or "default")
+            if len(normalized_header) < profile.min_columns:
+                return CsvValidation(exists=True, is_valid=False, issue="schema_too_few_columns", columns=normalized_header, row_count=len(rows))
+            accepted_identifiers = set(profile.normalized_identifier_columns())
+            if accepted_identifiers and not any(col.lower() in accepted_identifiers for col in normalized_header if col):
+                return CsvValidation(exists=True, is_valid=False, issue=f"schema_missing_identifier:{profile.modality}", columns=normalized_header, row_count=len(rows))
     except Exception as exc:
         return CsvValidation(exists=True, is_valid=False, issue=f"parse_error:{exc.__class__.__name__}")
-    return CsvValidation(exists=True, is_valid=True, issue=None)
+    return CsvValidation(exists=True, is_valid=True, issue=None, columns=normalized_header, row_count=len(rows))

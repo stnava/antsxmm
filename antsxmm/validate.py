@@ -7,7 +7,7 @@ from typing import Dict, Iterable, List
 
 from .validation import build_validation_report as build_validation_report_v1
 from .validation.models import FindingCode, StudyValidationReport
-from .validation.reporting import build_issue_code_table
+from .validation.reporting import build_issue_code_table, serialize_validation_report, write_validation_json_report
 
 
 @dataclass(frozen=True)
@@ -355,3 +355,12 @@ def build_issue_code_summary(results: Dict[str, ValidationResult]) -> List[Issue
         counts[str(FindingCode.INVALID_MMWIDE_CSV)] += len(res.invalid_mmwide_files)
         counts[str(FindingCode.MISSING_STATUS_FILE)] += len(res.missing_status_files)
     return [IssueCodeRow(code=code, count=counts[code]) for code in sorted(code for code, count in counts.items() if count)]
+
+
+
+def serialize_report_to_json(report: ValidationReport) -> dict:
+    return serialize_validation_report(report.study_report)
+
+
+def write_report_json(report: ValidationReport, output_path: str | Path) -> Path:
+    return write_validation_json_report(report.study_report, output_path)

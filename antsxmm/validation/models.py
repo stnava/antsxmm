@@ -75,6 +75,8 @@ class RunValidationRecord:
     mmwide_exists: bool
     mmwide_valid: bool | None
     findings: tuple[ValidationFinding, ...] = ()
+    csv_columns: tuple[str, ...] = ()
+    csv_row_count: int = 0
 
     @property
     def session(self) -> SessionKey:

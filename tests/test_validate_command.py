@@ -238,3 +238,42 @@ def test_validate_cli_participant_mode_shows_ok_rows(tmp_path):
     assert result.exit_code == 0
     assert "Per-run validation table" in result.output
     assert "OK" in result.output
+
+
+
+def test_validate_detects_schema_mismatch_mmwide_csv(tmp_path):
+    bids_proj = tmp_path / "BIDS" / "breacher"
+    subj = bids_proj / "sub-9162" / "ses-followup-day2"
+    (subj / "anat").mkdir(parents=True)
+    (subj / "anat" / "sub-9162_ses-followup-day2_T1w.nii.gz").touch()
+
+    output_dir = tmp_path / "pymm"
+    _mk_expected_outputs(output_dir, "breacher", "sub-9162", "ses-followup-day2", [("T1w", "run-01")])
+    _write_mmwide(
+        output_dir / "breacher" / "sub-9162" / "ses-followup-day2" / "T1w" / "run-01" / "breacher+sub-9162+ses-followup-day2+T1w+run-01+mmwide.csv",
+        rows=["foo,bar", "1,2"],
+    )
+
+    report = build_validation_report(bids_proj, output_dir)
+    finding_messages = [f.message for f in report.study_report.findings if f.code.value == "invalid_mmwide_csv"]
+    assert any("schema_missing_identifier:T1w" in message for message in finding_messages)
+
+
+def test_validate_cli_writes_json_report(tmp_path):
+    bids_proj = tmp_path / "BIDS" / "breacher"
+    subj = bids_proj / "sub-9162" / "ses-followup-day2"
+    (subj / "anat").mkdir(parents=True)
+    (subj / "anat" / "sub-9162_ses-followup-day2_T1w.nii.gz").touch()
+
+    output_dir = tmp_path / "pymm"
+    report_json = tmp_path / "reports" / "validate.json"
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["validate", str(bids_proj), str(output_dir), "--summary-only", "--report-json", str(report_json)])
+    assert result.exit_code == 0
+    assert report_json.exists()
+    payload = __import__("json").loads(report_json.read_text(encoding="utf-8"))
+    assert payload["summary"]["session_count"] == 1
+    assert payload["records"][0]["modality"] == "T1w"
+    assert "missing_mmwide_csv" in payload["summary"]["finding_counts"]
+    assert "JSON report:" in result.output

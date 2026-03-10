@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from pathlib import Path
 from typing import Iterable
 
@@ -36,9 +35,7 @@ def build_validation_report(
     expected_sessions = tuple(sorted({artifact.session for artifact in expected}))
     inventory = scan_output_inventory(output_dir, project_id)
 
-    discovered_by_key = {
-        (run.session, run.run): run for run in inventory.discovered_runs
-    }
+    discovered_by_key = {(run.session, run.run): run for run in inventory.discovered_runs}
     expected_keys = {(artifact.session, artifact.run) for artifact in expected}
     findings: list[ValidationFinding] = []
     records: list[RunValidationRecord] = []
@@ -97,6 +94,8 @@ def _validate_expected_artifact(
     dir_exists = discovered is not None and artifact.output_dir.exists()
     mmwide_exists = artifact.mmwide_csv.exists()
     mmwide_valid: bool | None = None
+    csv_columns: tuple[str, ...] = ()
+    csv_row_count = 0
 
     if not dir_exists:
         findings.append(
@@ -121,8 +120,10 @@ def _validate_expected_artifact(
             )
         )
     elif check_mmwide_content:
-        csv_validation = validate_mmwide_csv(artifact.mmwide_csv)
+        csv_validation = validate_mmwide_csv(artifact.mmwide_csv, modality=artifact.run.modality)
         mmwide_valid = csv_validation.is_valid
+        csv_columns = csv_validation.columns
+        csv_row_count = csv_validation.row_count
         if csv_validation.is_valid is False:
             code = FindingCode.EMPTY_MMWIDE_CSV if csv_validation.issue in {"empty_header", "no_rows", "blank_header"} else FindingCode.INVALID_MMWIDE_CSV
             findings.append(
@@ -145,6 +146,8 @@ def _validate_expected_artifact(
             mmwide_exists=mmwide_exists,
             mmwide_valid=mmwide_valid,
             findings=tuple(findings),
+            csv_columns=csv_columns,
+            csv_row_count=csv_row_count,
         ),
         findings,
     )

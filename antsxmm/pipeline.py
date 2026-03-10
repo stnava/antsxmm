@@ -438,6 +438,7 @@ def aggregate_cmd(
 @click.option("--summary-only", is_flag=True, help="Print only study-level summary tables.")
 @click.option("--issues-only", is_flag=True, help="Only print per-run rows with non-OK status.")
 @click.option("--all-rows", is_flag=True, help="Print all per-run rows, including OK rows.")
+@click.option("--report-json", type=click.Path(path_type=Path), help="Write a machine-readable JSON validation report.")
 def validate_cmd(
     input_bids_project: Path,
     output_dir: Path,
@@ -445,6 +446,7 @@ def validate_cmd(
     summary_only: bool,
     issues_only: bool,
     all_rows: bool,
+    report_json: Path | None,
 ) -> None:
     """Validate expected antsxmm outputs and report study-level and per-run results.
 
@@ -458,6 +460,8 @@ def validate_cmd(
             build_session_modality_table,
             build_missing_percentage_table,
             build_issue_code_summary,
+            build_validation_report,
+            write_report_json,
         )
     except ImportError:
         from antsxmm.validate import (
@@ -466,13 +470,18 @@ def validate_cmd(
             build_session_modality_table,
             build_missing_percentage_table,
             build_issue_code_summary,
+            build_validation_report,
+            write_report_json,
         )
 
-    results = validate_project(
+    validation_report = build_validation_report(
         input_bids_project,
         output_dir,
         participant_labels=participant_label or None,
     )
+    results = validation_report.legacy_results
+    if report_json is not None:
+        report_path = write_report_json(validation_report, report_json)
     summary = summarize_results(results)
     rows = build_session_modality_table(results)
     missing_pct_rows = build_missing_percentage_table(results)
@@ -510,6 +519,10 @@ def validate_cmd(
             click.echo(f"{row.code:<28} {row.count:>8}")
     else:
         click.echo("No issues detected.")
+
+    if report_json is not None:
+        click.echo("")
+        click.echo(f"JSON report: {report_path}")
 
     if summary_only:
         return
