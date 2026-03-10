@@ -30,7 +30,8 @@ pip install ".[test]"
 ```bash
 antsxmm run <BIDS_DIR> <OUTPUT_DIR> --project <PROJECT>
 antsxmm tree <PATH>
-antsxmm validate <PATH> --pymm-dir <OUTPUT_DIR>
+antsxmm validate <INPUT_BIDS_PROJECT> <OUTPUT_DIR>
+antsxmm aggregate <ROOT> --output <AGGREGATE.csv>
 ```
 
 A compatibility entry path is also supported, so this still works:
@@ -67,6 +68,19 @@ antsxmm run BIDS/PPMI pymm --project PPMI
 ```bash
 antsxmm run BIDS/PPMI pymm --project PPMI --dry-run --verbose
 ```
+
+### Aggregate per-run merged tables
+
+```bash
+antsxmm aggregate study_root --output study_root/aggregate.csv
+```
+
+`aggregate` recursively discovers `*mmwidemerged.csv` files below `ROOT`, resolves
+study entities from the directory layout and filename, and writes one study-level
+row per `(project_id, subject_id, session_id, modality, run_id)` entity. By
+default it prefers `Processed/` over `pymm/` when duplicates exist and keeps an
+incremental state file next to the output so later runs only re-read changed
+entities.
 
 ## Environment defaults and cluster usage
 

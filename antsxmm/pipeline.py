@@ -339,6 +339,95 @@ def tree_cmd(path: str, create: bool) -> None:
                 d = _Path("pymm") / project / subject / ses / modality / run
                 d.mkdir(parents=True, exist_ok=True)
 
+
+
+@main.command("aggregate", short_help="Aggregate mmwidemerged tables into one study table.")
+@click.argument("root", type=click.Path(exists=True, path_type=Path))
+@click.option(
+    "--output",
+    required=True,
+    type=click.Path(path_type=Path),
+    help="Output table path (.csv or .parquet).",
+)
+@click.option(
+    "--pattern",
+    default="*mmwidemerged.csv",
+    show_default=True,
+    help="Recursive glob pattern used to discover per-run merged tables under ROOT.",
+)
+@click.option(
+    "--state",
+    "state_path",
+    type=click.Path(path_type=Path),
+    help="Incremental state file. Defaults to <output>.state.json.",
+)
+@click.option(
+    "--rejects",
+    "rejects_path",
+    type=click.Path(path_type=Path),
+    help="CSV file listing rejected inputs. Defaults to <output>.rejects.csv.",
+)
+@click.option(
+    "--prefer",
+    type=click.Choice(["processed-first", "pymm-first", "newest", "largest", "error"], case_sensitive=False),
+    default="processed-first",
+    show_default=True,
+    help="Duplicate-resolution policy when multiple files map to the same project/subject/session/modality/run entity.",
+)
+@click.option(
+    "--incremental/--no-incremental",
+    default=True,
+    show_default=True,
+    help="Reuse the existing aggregate and only re-read changed entities when state is available.",
+)
+def aggregate_cmd(
+    root: Path,
+    output: Path,
+    pattern: str,
+    state_path: Path | None,
+    rejects_path: Path | None,
+    prefer: str,
+    incremental: bool,
+) -> None:
+    """Aggregate discovered *mmwidemerged.csv files into one study-level table.
+
+    ROOT is a directory that contains one or more source roots such as pymm/
+    and Processed/. Each discovered file must resolve to a unique entity using
+    project_id, subject_id, session_id, modality, and run_id from the path or
+    the file name.
+
+    The output table keeps one row per entity after duplicate resolution. When
+    incremental mode is enabled, antsxmm stores a lightweight state file so
+    unchanged entities can be reused on later runs.
+    """
+    try:
+        from .aggregate import aggregate_merged_tables
+    except ImportError:
+        from antsxmm.aggregate import aggregate_merged_tables
+
+    result = aggregate_merged_tables(
+        root=root,
+        output=output,
+        pattern=pattern,
+        state_path=state_path,
+        rejects_path=rejects_path,
+        incremental=incremental,
+        prefer=prefer.lower(),
+    )
+
+    click.echo(
+        "aggregate "
+        f"scanned={result.scanned} "
+        f"read={result.read} "
+        f"rows_written={result.rows_written} "
+        f"rejected={result.rejected} "
+        f"incremental={'yes' if result.incremental else 'no'} "
+        f"reused_existing={'yes' if result.reused_existing else 'no'}"
+    )
+    click.echo(f"output={result.output_path}")
+    click.echo(f"state={result.state_path}")
+    click.echo(f"rejects={result.rejects_path}")
+
 @main.command("validate", short_help="Validate processed outputs against a BIDS project.")
 @click.argument("input_bids_project", type=click.Path(exists=True, path_type=Path))
 @click.argument("output_dir", type=click.Path(path_type=Path))
