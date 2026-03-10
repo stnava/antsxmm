@@ -14,12 +14,6 @@ except ImportError:
 import click
 from tqdm import tqdm
 
-try:
-    from .aggregate import aggregate_merged_tables, DEFAULT_PATTERN, DEFAULT_PREFER
-except ImportError:
-    from antsxmm.aggregate import aggregate_merged_tables, DEFAULT_PATTERN, DEFAULT_PREFER
-
-
 # --- Logging Configuration ---
 def setup_logging(verbose: bool):
     """Configures logging and silences known library noise."""
@@ -346,102 +340,85 @@ def tree_cmd(path: str, create: bool) -> None:
                 d.mkdir(parents=True, exist_ok=True)
 
 @main.command("validate", short_help="Validate processed outputs against a BIDS project.")
-@click.argument("input_bids_project", type=click.Path(exists=True, file_okay=False, path_type=Path), metavar="INPUT_BIDS_PROJECT")
-@click.argument("output_dir", required=False, type=click.Path(file_okay=False, path_type=Path), metavar="OUTPUT_DIR")
-@click.option("--pymm-dir", "legacy_output_dir", type=click.Path(file_okay=False, path_type=Path), help="Deprecated alias for OUTPUT_DIR.")
-@click.option("--participant-label", "participant_labels", multiple=True, help="Restrict validation to one or more subjects (repeatable or comma-separated, e.g. sub-01 or --participant-label sub-01 --participant-label sub-02).")
-def validate_cmd(input_bids_project: Path, output_dir: Path | None, legacy_output_dir: Path | None, participant_labels: tuple[str, ...]) -> None:
-    """
-    Validate processed antsxmm outputs against one BIDS project.
+@click.argument("input_bids_project", type=click.Path(exists=True, path_type=Path))
+@click.argument("output_dir", type=click.Path(path_type=Path))
+@click.option(
+    "--participant-label",
+    multiple=True,
+    help="Restrict validation to one or more subject IDs, e.g. --participant-label sub-0102.",
+)
+def validate_cmd(input_bids_project: Path, output_dir: Path, participant_label: tuple[str, ...]) -> None:
+    """Validate expected antsxmm outputs and report per-session results plus summary statistics.
 
-    
-    INPUT_BIDS_PROJECT should point to one project directory such as
-    BIDS/breacher. OUTPUT_DIR should point to the processed antsxmm
-    output root such as pymm or Processed.
-
-    
-    The command predicts the expected
-    <project>/<subject>/<session>/<modality>/<run> directories from the
-    BIDS tree and compares them to what exists under OUTPUT_DIR.
-
-    
-    It reports, per session:
-      OK expected outputs found
-      missing expected outputs
-      missing expected mmwide.csv files
-      unexpected output directories present
+    INPUT_BIDS_PROJECT is one dataset directory such as BIDS/breacher.
+    OUTPUT_DIR is the processed antsxmm root such as pymm or Processed.
     """
     try:
-        from .validate import validate_project
+        from .validate import validate_project, summarize_results, build_summary_table, build_missing_percentage_table
     except ImportError:
-        from antsxmm.validate import validate_project
-
-    resolved_output_dir = output_dir or legacy_output_dir or Path("pymm")
-    if output_dir is not None and legacy_output_dir is not None and output_dir != legacy_output_dir:
-        raise click.UsageError("Provide OUTPUT_DIR positionally or via --pymm-dir, not both with different values.")
-
-    if legacy_output_dir is not None and output_dir is None:
-        click.echo("[deprecated] --pymm-dir is supported for compatibility; prefer: antsxmm validate INPUT_BIDS_PROJECT OUTPUT_DIR", err=True)
+        from antsxmm.validate import validate_project, summarize_results, build_summary_table, build_missing_percentage_table
 
     results = validate_project(
         input_bids_project,
-        output_dir=resolved_output_dir,
-        participant_labels=participant_labels or None,
+        output_dir,
+        participant_labels=participant_label or None,
     )
+    summary = summarize_results(results)
+    rows = build_summary_table(results)
+    missing_pct_rows = build_missing_percentage_table(results)
 
-    total_missing = 0
-    total_missing_mmwide = 0
-    total_unexpected = 0
-    total_ok = 0
+    click.secho("Validation summary", fg="cyan", bold=True)
+    click.echo(f"  Sessions checked: {summary.session_count}")
+    click.echo(f"  Clean sessions: {summary.clean_session_count}")
+    click.echo(f"  Sessions with issues: {summary.affected_session_count}")
+    click.echo(f"  OK directories: {summary.ok_count}")
+    click.echo(f"  Missing directories: {summary.missing_count}")
+    click.echo(f"  Unexpected directories: {summary.unexpected_count}")
+    click.echo(f"  Missing mmwide.csv files: {summary.missing_mmwide_count}")
+    click.echo("")
+
+    click.secho("Per-session table", fg="cyan", bold=True)
+    click.echo(f"{'Session':<40} {'Status':<8} {'OK':>4} {'Missing':>8} {'Unexpected':>11} {'MissingCSV':>11}  Missing modalities")
+    click.echo(f"{'-' * 40} {'-' * 8} {'-' * 4} {'-' * 8} {'-' * 11} {'-' * 11}  {'-' * 18}")
+    for row in rows:
+        status_color = "green" if row.status == "clean" else "yellow"
+        missing_modalities = ",".join(row.missing_modalities) if row.missing_modalities else "-"
+        click.secho(
+            f"{row.session_key:<40} {row.status:<8} {row.ok_count:>4} {row.missing_count:>8} {row.unexpected_count:>11} {row.missing_mmwide_count:>11}  {missing_modalities}",
+            fg=status_color,
+        )
+
+
+    click.echo("")
+    click.secho("Missing percentage table", fg="cyan", bold=True)
+    click.echo(f"{'Modality':<20} {'Expected':>8} {'DirOK':>8} {'DirMiss':>8} {'DirMiss%':>9} {'CSVOK':>8} {'CSVMiss':>8} {'CSVMiss%':>9}")
+    click.echo(f"{'-' * 20} {'-' * 8} {'-' * 8} {'-' * 8} {'-' * 9} {'-' * 8} {'-' * 8} {'-' * 9}")
+    for row in missing_pct_rows:
+        click.echo(
+            f"{row.modality:<20} {row.expected_count:>8} {row.present_dir_count:>8} {row.missing_dir_count:>8} {row.missing_dir_pct:>8.1f}% {row.present_mmwide_count:>8} {row.missing_mmwide_count:>8} {row.missing_mmwide_pct:>8.1f}%"
+        )
 
     for session_key, res in results.items():
-        total_missing += len(res.missing)
-        total_unexpected += len(res.unexpected)
-        total_ok += len(res.ok)
-        total_missing_mmwide += len(res.missing_mmwide_files)
+        if not (res.missing or res.unexpected or res.missing_mmwide_files):
+            continue
         click.secho(f"Session: {session_key}", bold=True)
-        click.secho(f"  OK: {len(res.ok)}", fg="green")
-        click.secho(f"  Missing: {len(res.missing)}", fg="red" if res.missing else None)
-        click.secho(f"  Unexpected: {len(res.unexpected)}", fg="yellow" if res.unexpected else None)
-        click.secho(f"  Missing mmwide.csv: {len(res.missing_mmwide_files)}", fg="red" if res.missing_mmwide_files else None)
-        for missing_file in res.missing_mmwide_files:
-            click.echo(f"    missing mmwide.csv: {missing_file}")
-        print("")
-
-    if participant_labels:
-        click.echo(f"participant_filter={','.join(participant_labels)}")
-
-    click.echo(
-        f"Summary: sessions={len(results)} ok={total_ok} missing={total_missing} missing_mmwide={total_missing_mmwide} unexpected={total_unexpected} output_root={resolved_output_dir}"
-    )
-
-    if total_missing or total_unexpected or total_missing_mmwide:
-        raise SystemExit(1)
-
-@main.command("aggregate", short_help="Aggregate merged session csv files into one study table.")
-@click.argument("root", type=click.Path(exists=True, file_okay=False, path_type=Path))
-@click.option("--pattern", default=DEFAULT_PATTERN, show_default=True, help="Glob pattern for merged csv discovery.")
-@click.option("--output", required=True, type=click.Path(path_type=Path), help="Output study table path (.csv or .parquet).")
-@click.option("--state", "state_path", type=click.Path(path_type=Path), help="Incremental state manifest path.")
-@click.option("--rejects", "rejects_path", type=click.Path(path_type=Path), help="Rejected file report path.")
-@click.option("--incremental/--no-incremental", default=True, show_default=True, help="Reuse prior aggregate output and only refresh affected entities.")
-@click.option("--prefer", type=click.Choice(["processed-first", "pymm-first", "newest", "largest", "error"]), default=DEFAULT_PREFER, show_default=True, help="Duplicate resolution policy for the same project/subject/session/modality/run.")
-def aggregate_cmd(root: Path, output: Path, pattern: str, state_path: Path | None, rejects_path: Path | None, incremental: bool, prefer: str) -> None:
-    """📚 Aggregate *mmwidemerged.csv files across a mixed tree into one study table."""
-    result = aggregate_merged_tables(
-        root=root,
-        output=output,
-        pattern=pattern,
-        state_path=state_path,
-        rejects_path=rejects_path,
-        incremental=incremental,
-        prefer=prefer,
-    )
-    click.echo(f"aggregate scanned={result.scanned} read={result.read} rows={result.rows_written} rejected={result.rejected} incremental={'yes' if result.incremental else 'no'} reused_existing={'yes' if result.reused_existing else 'no'}")
-    click.echo(f"output={result.output_path}")
-    click.echo(f"state={result.state_path}")
-    click.echo(f"rejects={result.rejects_path}")
-
+        if res.missing_modalities:
+            click.secho(f"  Missing modalities: {', '.join(res.missing_modalities)}", fg="red")
+        if res.missing:
+            click.secho(f"  Missing directories: {len(res.missing)}", fg="red")
+            for item in res.missing:
+                click.echo(f"    - {item}")
+        if res.unexpected:
+            click.secho(f"  Unexpected directories: {len(res.unexpected)}", fg="yellow")
+            for item in res.unexpected:
+                click.echo(f"    - {item}")
+        if res.missing_mmwide_files:
+            click.secho(f"  Missing mmwide.csv files: {len(res.missing_mmwide_files)}", fg="red")
+            for item in res.missing_mmwide_files:
+                click.echo(f"    - {item}")
+        if res.ok:
+            click.secho(f"  OK directories: {len(res.ok)}", fg="green")
+        click.echo("")
 
 def _run_pipeline_logic(
     bids_dir: str,
