@@ -1,6 +1,5 @@
 import os
 import sys
-import types
 import logging
 import warnings
 import json
@@ -8,8 +7,10 @@ from pathlib import Path
 
 try:
     from .environment import apply_default_environment, format_environment_policy_for_log, get_effective_environment_policy
+    from .runtime_imports import import_optional_module
 except ImportError:
     from antsxmm.environment import apply_default_environment, format_environment_policy_for_log, get_effective_environment_policy
+    from antsxmm.runtime_imports import import_optional_module
 
 import click
 from tqdm import tqdm
@@ -33,15 +34,8 @@ def setup_logging(verbose: bool):
         warnings.filterwarnings("ignore", category=UserWarning, module="antspymm")
 
 # --- Optional Dependency Handling ---
-try:
-    import antspymm  # type: ignore
-except ModuleNotFoundError:
-    antspymm = types.SimpleNamespace()
-
-try:
-    import antspyt1w  # type: ignore
-except ModuleNotFoundError:
-    antspyt1w = types.SimpleNamespace()
+antspymm = import_optional_module("antspymm")
+antspyt1w = import_optional_module("antspyt1w")
 
 try:
     from ._version import version as __version__

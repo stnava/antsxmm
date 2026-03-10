@@ -5,17 +5,10 @@ smaller units under antsxmm/, but we keep these imports for backwards
 compatibility (CLI/tests/third-party scripts).
 """
 
-import types
+from .runtime_imports import import_optional_module
 
-try:
-    import antspymm  # type: ignore
-except Exception:
-    antspymm = types.SimpleNamespace()
-
-try:
-    import ants  # type: ignore
-except Exception:
-    ants = types.SimpleNamespace()
+antspymm = import_optional_module("antspymm")
+ants = import_optional_module("ants")
 
 from .inputs import (
     plan_session_inputs,
