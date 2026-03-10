@@ -435,8 +435,18 @@ def aggregate_cmd(
     multiple=True,
     help="Restrict validation to one or more subject IDs, e.g. --participant-label sub-0102.",
 )
-def validate_cmd(input_bids_project: Path, output_dir: Path, participant_label: tuple[str, ...]) -> None:
-    """Validate expected antsxmm outputs and report per-session results plus summary statistics.
+@click.option("--summary-only", is_flag=True, help="Print only study-level summary tables.")
+@click.option("--issues-only", is_flag=True, help="Only print per-run rows with non-OK status.")
+@click.option("--all-rows", is_flag=True, help="Print all per-run rows, including OK rows.")
+def validate_cmd(
+    input_bids_project: Path,
+    output_dir: Path,
+    participant_label: tuple[str, ...],
+    summary_only: bool,
+    issues_only: bool,
+    all_rows: bool,
+) -> None:
+    """Validate expected antsxmm outputs and report study-level and per-run results.
 
     INPUT_BIDS_PROJECT is one dataset directory such as BIDS/breacher.
     OUTPUT_DIR is the processed antsxmm root such as pymm or Processed.
@@ -447,6 +457,7 @@ def validate_cmd(input_bids_project: Path, output_dir: Path, participant_label: 
             summarize_results,
             build_session_modality_table,
             build_missing_percentage_table,
+            build_issue_code_summary,
         )
     except ImportError:
         from antsxmm.validate import (
@@ -454,6 +465,7 @@ def validate_cmd(input_bids_project: Path, output_dir: Path, participant_label: 
             summarize_results,
             build_session_modality_table,
             build_missing_percentage_table,
+            build_issue_code_summary,
         )
 
     results = validate_project(
@@ -464,6 +476,10 @@ def validate_cmd(input_bids_project: Path, output_dir: Path, participant_label: 
     summary = summarize_results(results)
     rows = build_session_modality_table(results)
     missing_pct_rows = build_missing_percentage_table(results)
+    issue_rows = build_issue_code_summary(results)
+
+    show_all_rows = bool(all_rows or (participant_label and not issues_only and not summary_only))
+    show_only_issues = bool(issues_only or (not show_all_rows and not summary_only))
 
     click.secho("Validation summary", fg="cyan", bold=True)
     click.echo(f"  Sessions checked: {summary.session_count}")
@@ -473,34 +489,52 @@ def validate_cmd(input_bids_project: Path, output_dir: Path, participant_label: 
     click.echo(f"  Missing directories: {summary.missing_count}")
     click.echo(f"  Unexpected directories: {summary.unexpected_count}")
     click.echo(f"  Missing mmwide.csv files: {summary.missing_mmwide_count}")
+    click.echo(f"  Invalid mmwide.csv files: {summary.invalid_mmwide_count}")
+    click.echo(f"  Missing status files: {summary.missing_status_count}")
     click.echo("")
 
-    click.secho("Per-session table", fg="cyan", bold=True)
+    click.secho("Missing percentage table", fg="cyan", bold=True)
+    click.echo(f"{'Modality':<20} {'Expected':>8} {'DirOK':>8} {'DirMiss':>8} {'DirMiss%':>9} {'CSVOK':>8} {'CSVMiss':>8} {'CSVMiss%':>9} {'CSVBad':>8} {'CSVBad%':>8}")
+    click.echo(f"{'-' * 20} {'-' * 8} {'-' * 8} {'-' * 8} {'-' * 9} {'-' * 8} {'-' * 8} {'-' * 9} {'-' * 8} {'-' * 8}")
+    for row in missing_pct_rows:
+        click.echo(
+            f"{row.modality:<20} {row.expected_count:>8} {row.present_dir_count:>8} {row.missing_dir_count:>8} {row.missing_dir_pct:>8.1f}% {row.present_mmwide_count:>8} {row.missing_mmwide_count:>8} {row.missing_mmwide_pct:>8.1f}% {row.invalid_mmwide_count:>8} {row.invalid_mmwide_pct:>7.1f}%"
+        )
+
+    click.echo("")
+    click.secho("Issue code summary", fg="cyan", bold=True)
+    if issue_rows:
+        click.echo(f"{'code':<28} {'count':>8}")
+        click.echo(f"{'-' * 28} {'-' * 8}")
+        for row in issue_rows:
+            click.echo(f"{row.code:<28} {row.count:>8}")
+    else:
+        click.echo("No issues detected.")
+
+    if summary_only:
+        return
+
+    filtered_rows = [row for row in rows if row.status != "OK"] if show_only_issues else rows
+    click.echo("")
+    click.secho("Per-run validation table", fg="cyan", bold=True)
     click.echo(
         f"{'subject_id':<14} {'session_id':<20} {'modality':<18} {'run_id':<10} {'status':<12} expected_mmwide_csv"
     )
     click.echo(
         f"{'-' * 14} {'-' * 20} {'-' * 18} {'-' * 10} {'-' * 12} {'-' * 20}"
     )
-    for row in rows:
-        status_color = "green" if row.status == "OK" else "yellow"
+    for row in filtered_rows:
+        status_color = "green" if row.status == "OK" else ("yellow" if row.status == "MISSING_CSV" else "red")
         click.secho(
             f"{row.subject_id:<14} {row.session_id:<20} {row.modality:<18} {row.run_id:<10} {row.status:<12} {row.expected_mmwide_csv or '-'}",
             fg=status_color,
         )
 
-    click.echo("")
-    click.secho("Missing percentage table", fg="cyan", bold=True)
-    click.echo(f"{'Modality':<20} {'Expected':>8} {'DirOK':>8} {'DirMiss':>8} {'DirMiss%':>9} {'CSVOK':>8} {'CSVMiss':>8} {'CSVMiss%':>9}")
-    click.echo(f"{'-' * 20} {'-' * 8} {'-' * 8} {'-' * 8} {'-' * 9} {'-' * 8} {'-' * 8} {'-' * 9}")
-    for row in missing_pct_rows:
-        click.echo(
-            f"{row.modality:<20} {row.expected_count:>8} {row.present_dir_count:>8} {row.missing_dir_count:>8} {row.missing_dir_pct:>8.1f}% {row.present_mmwide_count:>8} {row.missing_mmwide_count:>8} {row.missing_mmwide_pct:>8.1f}%"
-        )
-
     for session_key, res in results.items():
-        if not (res.missing or res.unexpected or res.missing_mmwide_files):
+        has_issues = bool(res.missing or res.unexpected or res.missing_mmwide_files or res.invalid_mmwide_files or res.missing_status_files)
+        if not has_issues:
             continue
+        click.echo("")
         click.secho(f"Session: {session_key}", bold=True)
         if res.missing_modalities:
             click.secho(f"  Missing modalities: {', '.join(res.missing_modalities)}", fg="red")
@@ -515,6 +549,14 @@ def validate_cmd(input_bids_project: Path, output_dir: Path, participant_label: 
         if res.missing_mmwide_files:
             click.secho(f"  Missing mmwide.csv files: {len(res.missing_mmwide_files)}", fg="red")
             for item in res.missing_mmwide_files:
+                click.echo(f"    - {item}")
+        if res.invalid_mmwide_files:
+            click.secho(f"  Invalid mmwide.csv files: {len(res.invalid_mmwide_files)}", fg="red")
+            for item in res.invalid_mmwide_files:
+                click.echo(f"    - {item}")
+        if res.missing_status_files:
+            click.secho(f"  Missing status files: {len(res.missing_status_files)}", fg="yellow")
+            for item in res.missing_status_files:
                 click.echo(f"    - {item}")
         if res.ok:
             click.secho(f"  OK directories: {len(res.ok)}", fg="green")

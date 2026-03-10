@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List
 
-from .tree import predict_tree
+from .validation import build_validation_report as build_validation_report_v1
+from .validation.models import FindingCode, StudyValidationReport
+from .validation.reporting import build_issue_code_table
 
 
 @dataclass(frozen=True)
@@ -14,6 +17,8 @@ class ValidationResult:
     ok: List[str]
     missing_mmwide_files: List[str]
     missing_modalities: List[str]
+    invalid_mmwide_files: List[str]
+    missing_status_files: List[str]
 
 
 @dataclass(frozen=True)
@@ -23,6 +28,8 @@ class ValidationSummary:
     missing_count: int
     unexpected_count: int
     missing_mmwide_count: int
+    invalid_mmwide_count: int
+    missing_status_count: int
     clean_session_count: int
     affected_session_count: int
 
@@ -34,6 +41,8 @@ class ValidationTableRow:
     missing_count: int
     unexpected_count: int
     missing_mmwide_count: int
+    invalid_mmwide_count: int
+    missing_status_count: int
     missing_modalities: List[str]
     status: str
 
@@ -58,6 +67,20 @@ class MissingPercentageRow:
     present_mmwide_count: int
     missing_mmwide_count: int
     missing_mmwide_pct: float
+    invalid_mmwide_count: int
+    invalid_mmwide_pct: float
+
+
+@dataclass(frozen=True)
+class IssueCodeRow:
+    code: str
+    count: int
+
+
+@dataclass(frozen=True)
+class ValidationReport:
+    study_report: StudyValidationReport
+    legacy_results: Dict[str, ValidationResult]
 
 
 def _normalize_participant_labels(participant_labels: Iterable[str] | None) -> set[str] | None:
@@ -65,18 +88,6 @@ def _normalize_participant_labels(participant_labels: Iterable[str] | None) -> s
         return None
     normalized = {str(label).strip() for label in participant_labels if str(label).strip()}
     return normalized or None
-
-
-def _expected_mmwide_path(
-    output_dir: Path,
-    project: str,
-    subject: str,
-    session: str,
-    modality: str,
-    run: str,
-) -> Path:
-    filename = f"{project}+{subject}+{session}+{modality}+{run}+mmwide.csv"
-    return output_dir / project / subject / session / modality / run / filename
 
 
 def _extract_modality_from_relpath(relpath: str) -> str:
@@ -89,85 +100,98 @@ def _extract_run_from_relpath(relpath: str) -> str:
     return parts[4] if len(parts) >= 5 else "unknown"
 
 
+def build_validation_report(
+    bids_project_dir: str | Path,
+    output_dir: str | Path = "pymm",
+    *,
+    participant_labels: Iterable[str] | None = None,
+    check_mmwide_content: bool = True,
+    check_status_files: bool = True,
+) -> ValidationReport:
+    study_report = build_validation_report_v1(
+        bids_project_dir,
+        output_dir,
+        participant_labels=participant_labels,
+        check_mmwide_content=check_mmwide_content,
+        check_status_files=check_status_files,
+    )
+    return ValidationReport(
+        study_report=study_report,
+        legacy_results=_build_legacy_results(study_report, Path(output_dir)),
+    )
+
+
+
 def validate_project(
     bids_project_dir: str | Path,
     output_dir: str | Path = "pymm",
     *,
     participant_labels: Iterable[str] | None = None,
 ) -> Dict[str, ValidationResult]:
-    """Validate a BIDS project against antsxmm outputs under output_dir.
+    report = build_validation_report(
+        bids_project_dir,
+        output_dir,
+        participant_labels=participant_labels,
+    )
+    return report.legacy_results
 
-    Parameters
-    ----------
-    bids_project_dir:
-        Path like: <bids>/<project>
-    output_dir:
-        Processed output root containing <project>/<subject>/<session>/...
-    participant_labels:
-        Optional subset of subject IDs, e.g. ["sub-01", "sub-02"]
 
-    Returns
-    -------
-    Mapping: "<subject>/<session>" -> ValidationResult
-    """
-    bids_project_dir = Path(bids_project_dir)
-    project = bids_project_dir.name
-    output_dir = Path(output_dir)
-    wanted_subjects = _normalize_participant_labels(participant_labels)
+def _build_legacy_results(study_report: StudyValidationReport, output_dir: Path) -> Dict[str, ValidationResult]:
+    expected_paths_by_session: dict[str, dict[tuple[str, str], str]] = defaultdict(dict)
+    ok_paths_by_session: dict[str, list[str]] = defaultdict(list)
+    missing_paths_by_session: dict[str, list[str]] = defaultdict(list)
+    missing_csv_by_session: dict[str, list[str]] = defaultdict(list)
+    invalid_csv_by_session: dict[str, list[str]] = defaultdict(list)
+    missing_status_by_session: dict[str, list[str]] = defaultdict(list)
+    unexpected_by_session: dict[str, list[str]] = defaultdict(list)
 
-    results: Dict[str, ValidationResult] = {}
+    for record in study_report.records:
+        session_key = record.session.label
+        rel_dir = str(record.expected.output_dir.relative_to(output_dir))
+        rel_csv = str(record.expected.mmwide_csv.relative_to(output_dir))
+        expected_paths_by_session[session_key][(record.run.modality, record.run.run_id)] = rel_dir
+        if record.dir_exists and record.mmwide_exists and not any(f.code in {FindingCode.INVALID_MMWIDE_CSV, FindingCode.EMPTY_MMWIDE_CSV} for f in record.findings):
+            ok_paths_by_session[session_key].append(rel_dir)
+        if any(f.code == FindingCode.MISSING_RUN_DIR for f in record.findings):
+            missing_paths_by_session[session_key].append(rel_dir)
+        if any(f.code == FindingCode.MISSING_MMWIDE_CSV for f in record.findings):
+            missing_csv_by_session[session_key].append(rel_csv)
+        if any(f.code in {FindingCode.INVALID_MMWIDE_CSV, FindingCode.EMPTY_MMWIDE_CSV} for f in record.findings):
+            invalid_csv_by_session[session_key].append(rel_csv)
+        if any(f.code == FindingCode.MISSING_STATUS_FILE for f in record.findings):
+            missing_status_by_session[session_key].append(str(record.expected.status_file.relative_to(output_dir)))
 
-    for subject_dir in sorted(bids_project_dir.glob("sub-*")):
-        subject_name = subject_dir.name
-        if wanted_subjects and subject_name not in wanted_subjects:
+    for finding in study_report.findings:
+        if finding.code not in {FindingCode.UNEXPECTED_RUN_DIR, FindingCode.ORPHAN_OUTPUT} or finding.path is None:
             continue
+        unexpected_by_session[finding.session.label].append(str(finding.path.relative_to(output_dir)))
 
-        _, subject, tree = predict_tree(subject_dir)
-
-        for ses_name, runs in tree.items():
-            key = f"{subject}/{ses_name}"
-
-            expected_dirs: set[Path] = set()
-            expected_mmwide_files: set[Path] = set()
-            for modality, run in runs:
-                expected_dirs.add(output_dir / project / subject / ses_name / modality / run)
-                expected_mmwide_files.add(
-                    _expected_mmwide_path(output_dir, project, subject, ses_name, modality, run)
-                )
-
-            existing_dirs: set[Path] = set()
-            root = output_dir / project / subject / ses_name
-            if root.exists():
-                for modality_dir in root.iterdir():
-                    if not modality_dir.is_dir():
-                        continue
-                    for child in modality_dir.iterdir():
-                        if child.is_dir():
-                            existing_dirs.add(child)
-
-            missing = sorted(str(p.relative_to(output_dir)) for p in expected_dirs - existing_dirs)
-            unexpected = sorted(str(p.relative_to(output_dir)) for p in existing_dirs - expected_dirs)
-            ok = sorted(str(p.relative_to(output_dir)) for p in expected_dirs & existing_dirs)
-            missing_mmwide_files = sorted(
-                str(p.relative_to(output_dir))
-                for p in expected_mmwide_files
-                if not p.exists()
-            )
-            missing_modalities = sorted(
-                {
-                    _extract_modality_from_relpath(path)
-                    for path in [*missing, *missing_mmwide_files]
-                }
-            )
-
-            results[key] = ValidationResult(
-                missing=missing,
-                unexpected=unexpected,
-                ok=ok,
-                missing_mmwide_files=missing_mmwide_files,
-                missing_modalities=missing_modalities,
-            )
-
+    session_keys = sorted(
+        set(expected_paths_by_session)
+        | set(unexpected_by_session)
+        | set(missing_status_by_session)
+    )
+    results: Dict[str, ValidationResult] = {}
+    for session_key in session_keys:
+        missing_modalities = sorted(
+            {
+                _extract_modality_from_relpath(path)
+                for path in [
+                    *missing_paths_by_session[session_key],
+                    *missing_csv_by_session[session_key],
+                    *invalid_csv_by_session[session_key],
+                ]
+            }
+        )
+        results[session_key] = ValidationResult(
+            missing=sorted(missing_paths_by_session[session_key]),
+            unexpected=sorted(unexpected_by_session[session_key]),
+            ok=sorted(ok_paths_by_session[session_key]),
+            missing_mmwide_files=sorted(missing_csv_by_session[session_key]),
+            missing_modalities=missing_modalities,
+            invalid_mmwide_files=sorted(invalid_csv_by_session[session_key]),
+            missing_status_files=sorted(set(missing_status_by_session[session_key])),
+        )
     return results
 
 
@@ -177,10 +201,12 @@ def summarize_results(results: Dict[str, ValidationResult]) -> ValidationSummary
     missing_count = sum(len(res.missing) for res in results.values())
     unexpected_count = sum(len(res.unexpected) for res in results.values())
     missing_mmwide_count = sum(len(res.missing_mmwide_files) for res in results.values())
+    invalid_mmwide_count = sum(len(res.invalid_mmwide_files) for res in results.values())
+    missing_status_count = sum(len(res.missing_status_files) for res in results.values())
     clean_session_count = sum(
         1
         for res in results.values()
-        if not res.missing and not res.unexpected and not res.missing_mmwide_files
+        if not res.missing and not res.unexpected and not res.missing_mmwide_files and not res.invalid_mmwide_files
     )
     affected_session_count = session_count - clean_session_count
     return ValidationSummary(
@@ -189,6 +215,8 @@ def summarize_results(results: Dict[str, ValidationResult]) -> ValidationSummary
         missing_count=missing_count,
         unexpected_count=unexpected_count,
         missing_mmwide_count=missing_mmwide_count,
+        invalid_mmwide_count=invalid_mmwide_count,
+        missing_status_count=missing_status_count,
         clean_session_count=clean_session_count,
         affected_session_count=affected_session_count,
     )
@@ -198,10 +226,9 @@ def build_summary_table(results: Dict[str, ValidationResult]) -> List[Validation
     rows: List[ValidationTableRow] = []
     for session_key in sorted(results):
         res = results[session_key]
-        if res.missing or res.unexpected or res.missing_mmwide_files:
-            status = "issues"
-        else:
-            status = "clean"
+        has_issues = bool(
+            res.missing or res.unexpected or res.missing_mmwide_files or res.invalid_mmwide_files or res.missing_status_files
+        )
         rows.append(
             ValidationTableRow(
                 session_key=session_key,
@@ -209,8 +236,10 @@ def build_summary_table(results: Dict[str, ValidationResult]) -> List[Validation
                 missing_count=len(res.missing),
                 unexpected_count=len(res.unexpected),
                 missing_mmwide_count=len(res.missing_mmwide_files),
+                invalid_mmwide_count=len(res.invalid_mmwide_files),
+                missing_status_count=len(res.missing_status_files),
                 missing_modalities=res.missing_modalities,
-                status=status,
+                status="issues" if has_issues else "clean",
             )
         )
     return rows
@@ -230,21 +259,29 @@ def build_session_modality_table(results: Dict[str, ValidationResult]) -> List[S
             (_extract_modality_from_relpath(relpath), _extract_run_from_relpath(relpath))
             for relpath in res.missing
         }
-
         expected_mmwide_by_key: dict[tuple[str, str], str] = {}
         missing_mmwide_by_key: set[tuple[str, str]] = set()
+        invalid_mmwide_by_key: set[tuple[str, str]] = set()
 
         for relpath in res.missing_mmwide_files:
             key = (_extract_modality_from_relpath(relpath), _extract_run_from_relpath(relpath))
             expected_mmwide_by_key[key] = relpath
             missing_mmwide_by_key.add(key)
+        for relpath in res.invalid_mmwide_files:
+            key = (_extract_modality_from_relpath(relpath), _extract_run_from_relpath(relpath))
+            expected_mmwide_by_key[key] = relpath
+            invalid_mmwide_by_key.add(key)
 
-        for modality, run_id in sorted(ok_by_key | missing_dir_by_key | set(expected_mmwide_by_key.keys())):
-            expected_mmwide_csv = expected_mmwide_by_key.get(key := (modality, run_id), "")
+        all_keys = ok_by_key | missing_dir_by_key | set(expected_mmwide_by_key.keys())
+        for modality, run_id in sorted(all_keys):
+            key = (modality, run_id)
+            expected_mmwide_csv = expected_mmwide_by_key.get(key, "")
             if key in missing_dir_by_key:
                 status = "MISSING"
             elif key in missing_mmwide_by_key:
                 status = "MISSING_CSV"
+            elif key in invalid_mmwide_by_key:
+                status = "INVALID_CSV"
             else:
                 status = "OK"
             rows.append(
@@ -264,6 +301,7 @@ def build_missing_percentage_table(results: Dict[str, ValidationResult]) -> List
     expected_by_modality: dict[str, int] = {}
     missing_dirs_by_modality: dict[str, int] = {}
     missing_mmwide_by_modality: dict[str, int] = {}
+    invalid_mmwide_by_modality: dict[str, int] = {}
 
     for res in results.values():
         for relpath in res.ok:
@@ -276,6 +314,9 @@ def build_missing_percentage_table(results: Dict[str, ValidationResult]) -> List
         for relpath in res.missing_mmwide_files:
             modality = _extract_modality_from_relpath(relpath)
             missing_mmwide_by_modality[modality] = missing_mmwide_by_modality.get(modality, 0) + 1
+        for relpath in res.invalid_mmwide_files:
+            modality = _extract_modality_from_relpath(relpath)
+            invalid_mmwide_by_modality[modality] = invalid_mmwide_by_modality.get(modality, 0) + 1
 
     rows: List[MissingPercentageRow] = []
     for modality in sorted(expected_by_modality):
@@ -283,9 +324,11 @@ def build_missing_percentage_table(results: Dict[str, ValidationResult]) -> List
         missing_dir_count = missing_dirs_by_modality.get(modality, 0)
         present_dir_count = expected_count - missing_dir_count
         missing_mmwide_count = missing_mmwide_by_modality.get(modality, 0)
-        present_mmwide_count = expected_count - missing_mmwide_count
+        invalid_mmwide_count = invalid_mmwide_by_modality.get(modality, 0)
+        present_mmwide_count = expected_count - missing_mmwide_count - invalid_mmwide_count
         missing_dir_pct = (100.0 * missing_dir_count / expected_count) if expected_count else 0.0
         missing_mmwide_pct = (100.0 * missing_mmwide_count / expected_count) if expected_count else 0.0
+        invalid_mmwide_pct = (100.0 * invalid_mmwide_count / expected_count) if expected_count else 0.0
         rows.append(
             MissingPercentageRow(
                 modality=modality,
@@ -296,6 +339,19 @@ def build_missing_percentage_table(results: Dict[str, ValidationResult]) -> List
                 present_mmwide_count=present_mmwide_count,
                 missing_mmwide_count=missing_mmwide_count,
                 missing_mmwide_pct=missing_mmwide_pct,
+                invalid_mmwide_count=invalid_mmwide_count,
+                invalid_mmwide_pct=invalid_mmwide_pct,
             )
         )
     return rows
+
+
+def build_issue_code_summary(results: Dict[str, ValidationResult]) -> List[IssueCodeRow]:
+    counts: dict[str, int] = defaultdict(int)
+    for res in results.values():
+        counts[str(FindingCode.MISSING_RUN_DIR)] += len(res.missing)
+        counts[str(FindingCode.UNEXPECTED_RUN_DIR)] += len(res.unexpected)
+        counts[str(FindingCode.MISSING_MMWIDE_CSV)] += len(res.missing_mmwide_files)
+        counts[str(FindingCode.INVALID_MMWIDE_CSV)] += len(res.invalid_mmwide_files)
+        counts[str(FindingCode.MISSING_STATUS_FILE)] += len(res.missing_status_files)
+    return [IssueCodeRow(code=code, count=counts[code]) for code in sorted(code for code, count in counts.items() if count)]
