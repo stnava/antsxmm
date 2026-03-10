@@ -439,6 +439,7 @@ def aggregate_cmd(
 @click.option("--issues-only", is_flag=True, help="Only print per-run rows with non-OK status.")
 @click.option("--all-rows", is_flag=True, help="Print all per-run rows, including OK rows.")
 @click.option("--report-json", type=click.Path(path_type=Path), help="Write a machine-readable JSON validation report.")
+@click.option("--strict-schema", is_flag=True, help="Apply modality-aware strict mmwide.csv metric validation.")
 def validate_cmd(
     input_bids_project: Path,
     output_dir: Path,
@@ -447,6 +448,7 @@ def validate_cmd(
     issues_only: bool,
     all_rows: bool,
     report_json: Path | None,
+    strict_schema: bool,
 ) -> None:
     """Validate expected antsxmm outputs and report study-level and per-run results.
 
@@ -478,6 +480,7 @@ def validate_cmd(
         input_bids_project,
         output_dir,
         participant_labels=participant_label or None,
+        strict_schema=strict_schema,
     )
     results = validation_report.legacy_results
     if report_json is not None:
@@ -500,6 +503,7 @@ def validate_cmd(
     click.echo(f"  Missing mmwide.csv files: {summary.missing_mmwide_count}")
     click.echo(f"  Invalid mmwide.csv files: {summary.invalid_mmwide_count}")
     click.echo(f"  Missing status files: {summary.missing_status_count}")
+    click.echo(f"  Strict schema mode: {'on' if strict_schema else 'off'}")
     click.echo("")
 
     click.secho("Missing percentage table", fg="cyan", bold=True)

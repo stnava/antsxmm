@@ -42,6 +42,9 @@ def build_summary_payload(report: StudyValidationReport) -> dict[str, Any]:
 def serialize_validation_report(report: StudyValidationReport) -> dict[str, Any]:
     return {
         "summary": build_summary_payload(report),
+        "config": {
+            "strict_schema": report.strict_schema,
+        },
         "expected_sessions": [
             {
                 "project_id": session.project_id,
@@ -65,6 +68,10 @@ def serialize_validation_report(report: StudyValidationReport) -> dict[str, Any]
                 "mmwide_valid": record.mmwide_valid,
                 "csv_columns": list(record.csv_columns),
                 "csv_row_count": record.csv_row_count,
+                "csv_issue": record.csv_issue,
+                "csv_profile": record.csv_profile,
+                "strict_schema_applied": record.strict_schema_applied,
+                "csv_metric_matches": list(record.csv_metric_matches),
                 "finding_codes": [str(finding.code) for finding in record.findings],
             }
             for record in report.records

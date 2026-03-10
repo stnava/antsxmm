@@ -24,6 +24,7 @@ def build_validation_report(
     participant_labels: Iterable[str] | None = None,
     check_mmwide_content: bool = True,
     check_status_files: bool = True,
+    strict_schema: bool = False,
 ) -> StudyValidationReport:
     bids_project_dir = Path(bids_project_dir)
     project_id = bids_project_dir.name
@@ -47,6 +48,7 @@ def build_validation_report(
             status=inventory.status_by_session.get(artifact.session),
             check_mmwide_content=check_mmwide_content,
             check_status_files=check_status_files,
+            strict_schema=strict_schema,
         )
         records.append(record)
         findings.extend(record_findings)
@@ -79,6 +81,7 @@ def build_validation_report(
         expected_sessions=expected_sessions,
         discovered_sessions=tuple(sorted(inventory.status_by_session.keys())),
         status_by_session=inventory.status_by_session,
+        strict_schema=strict_schema,
     )
 
 
@@ -89,6 +92,7 @@ def _validate_expected_artifact(
     status: dict | None,
     check_mmwide_content: bool,
     check_status_files: bool,
+    strict_schema: bool,
 ) -> tuple[RunValidationRecord, list[ValidationFinding]]:
     findings: list[ValidationFinding] = []
     dir_exists = discovered is not None and artifact.output_dir.exists()
@@ -96,6 +100,9 @@ def _validate_expected_artifact(
     mmwide_valid: bool | None = None
     csv_columns: tuple[str, ...] = ()
     csv_row_count = 0
+    csv_issue: str | None = None
+    csv_profile: str | None = None
+    csv_metric_matches: tuple[str, ...] = ()
 
     if not dir_exists:
         findings.append(
@@ -120,10 +127,13 @@ def _validate_expected_artifact(
             )
         )
     elif check_mmwide_content:
-        csv_validation = validate_mmwide_csv(artifact.mmwide_csv, modality=artifact.run.modality)
+        csv_validation = validate_mmwide_csv(artifact.mmwide_csv, modality=artifact.run.modality, strict_schema=strict_schema)
         mmwide_valid = csv_validation.is_valid
         csv_columns = csv_validation.columns
         csv_row_count = csv_validation.row_count
+        csv_issue = csv_validation.issue
+        csv_profile = csv_validation.profile_name
+        csv_metric_matches = csv_validation.metric_matches
         if csv_validation.is_valid is False:
             code = FindingCode.EMPTY_MMWIDE_CSV if csv_validation.issue in {"empty_header", "no_rows", "blank_header"} else FindingCode.INVALID_MMWIDE_CSV
             findings.append(
@@ -148,6 +158,10 @@ def _validate_expected_artifact(
             findings=tuple(findings),
             csv_columns=csv_columns,
             csv_row_count=csv_row_count,
+            csv_issue=csv_issue,
+            csv_profile=csv_profile,
+            strict_schema_applied=strict_schema,
+            csv_metric_matches=csv_metric_matches,
         ),
         findings,
     )

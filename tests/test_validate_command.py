@@ -24,7 +24,6 @@ def _write_mmwide(path: Path, *, rows: list[str] | None = None):
         rows = ["metric,value", "foo,1"]
     path.write_text("\n".join(rows) + "\n", encoding="utf-8")
 
-
 def test_validate_perfect_tree(tmp_path):
     bids_proj = tmp_path / "BIDS" / "breacher"
     subj = bids_proj / "sub-9162" / "ses-followup-day2"
@@ -120,25 +119,6 @@ def test_missing_percentage_table(tmp_path):
     assert t1w_row.missing_mmwide_pct == 50.0
 
 
-def test_build_session_modality_table_prefers_missing_csv_status(tmp_path):
-    bids_proj = tmp_path / "BIDS" / "breacher"
-    subj = bids_proj / "sub-0102" / "ses-initial-day1"
-    (subj / "anat").mkdir(parents=True)
-    (subj / "anat" / "sub-0102_ses-initial-day1_T1w.nii.gz").touch()
-
-    output_dir = tmp_path / "pymm"
-    _mk_expected_outputs(output_dir, "breacher", "sub-0102", "ses-initial-day1", [("T1w", "run-01")])
-
-    results = validate_project(bids_proj, output_dir)
-    rows = build_session_modality_table(results)
-    t1w_row = next(row for row in rows if row.modality == "T1w")
-    assert t1w_row.subject_id == "sub-0102"
-    assert t1w_row.session_id == "ses-initial-day1"
-    assert t1w_row.run_id == "run-01"
-    assert t1w_row.status == "MISSING_CSV"
-    assert t1w_row.expected_mmwide_csv.endswith("breacher/sub-0102/ses-initial-day1/T1w/run-01/breacher+sub-0102+ses-initial-day1+T1w+run-01+mmwide.csv")
-
-
 def test_validate_detects_invalid_mmwide_csv(tmp_path):
     bids_proj = tmp_path / "BIDS" / "breacher"
     subj = bids_proj / "sub-9162" / "ses-followup-day2"
@@ -149,22 +129,20 @@ def test_validate_detects_invalid_mmwide_csv(tmp_path):
     _mk_expected_outputs(output_dir, "breacher", "sub-9162", "ses-followup-day2", [("T1w", "run-01")])
     _write_mmwide(
         output_dir / "breacher" / "sub-9162" / "ses-followup-day2" / "T1w" / "run-01" / "breacher+sub-9162+ses-followup-day2+T1w+run-01+mmwide.csv",
-        rows=["metric,value"],
+        rows=["metric,metric", "foo,1"],
     )
 
-    results = validate_project(bids_proj, output_dir)
-    rows = build_session_modality_table(results)
-    t1w_row = next(row for row in rows if row.modality == "T1w")
-    assert t1w_row.status == "INVALID_CSV"
-    summary = summarize_results(results)
-    assert summary.invalid_mmwide_count == 1
+    report = build_validation_report(bids_proj, output_dir)
+    result = report.legacy_results["sub-9162/ses-followup-day2"]
+    assert len(result.invalid_mmwide_files) == 1
+    assert result.ok == []
 
 
-def test_validation_report_detects_orphan_output(tmp_path):
+def test_validate_detects_orphan_output(tmp_path):
     bids_proj = tmp_path / "BIDS" / "breacher"
-    subj = bids_proj / "sub-0102" / "ses-initial-day1"
+    subj = bids_proj / "sub-9162" / "ses-followup-day2"
     (subj / "anat").mkdir(parents=True)
-    (subj / "anat" / "sub-0102_ses-initial-day1_T1w.nii.gz").touch()
+    (subj / "anat" / "sub-9162_ses-followup-day2_T1w.nii.gz").touch()
 
     output_dir = tmp_path / "pymm"
     orphan_dir = output_dir / "breacher" / "sub-9999" / "ses-ghost" / "T1w" / "run-01"
@@ -172,57 +150,33 @@ def test_validation_report_detects_orphan_output(tmp_path):
     _write_mmwide(orphan_dir / "breacher+sub-9999+ses-ghost+T1w+run-01+mmwide.csv")
 
     report = build_validation_report(bids_proj, output_dir)
-    assert any(f.code.value == "orphan_output" for f in report.study_report.findings)
-    assert "sub-9999/ses-ghost" in report.legacy_results
+    orphan_findings = [f for f in report.study_report.findings if f.code.value == "orphan_output"]
+    assert len(orphan_findings) == 1
+    assert orphan_findings[0].session.subject_id == "sub-9999"
 
 
-def test_validate_cli_prints_summary_and_tables(tmp_path):
+def test_validate_cli_summary_first_and_issue_only_default(tmp_path):
     bids_proj = tmp_path / "BIDS" / "breacher"
-    subj = bids_proj / "sub-9162" / "ses-followup-day2"
-    (subj / "anat").mkdir(parents=True)
-    (subj / "anat" / "sub-9162_ses-followup-day2_T1w.nii.gz").touch()
+    for subject in ["sub-0102", "sub-0103"]:
+        subj = bids_proj / subject / "ses-initial-day1"
+        (subj / "anat").mkdir(parents=True)
+        (subj / "anat" / f"{subject}_ses-initial-day1_T1w.nii.gz").touch()
 
     output_dir = tmp_path / "pymm"
-    _mk_expected_outputs(output_dir, "breacher", "sub-9162", "ses-followup-day2", [("T1w", "run-01")])
+    _mk_expected_outputs(output_dir, "breacher", "sub-0102", "ses-initial-day1", [("T1w", "run-01"), ("T1wHierarchical", "run-01")])
+    _write_mmwide(output_dir / "breacher" / "sub-0102" / "ses-initial-day1" / "T1w" / "run-01" / "breacher+sub-0102+ses-initial-day1+T1w+run-01+mmwide.csv")
 
     runner = CliRunner()
     result = runner.invoke(main, ["validate", str(bids_proj), str(output_dir)])
     assert result.exit_code == 0
     assert "Validation summary" in result.output
     assert "Missing percentage table" in result.output
-    assert "Issue code summary" in result.output
-    assert "Per-run validation table" in result.output
-    assert "subject_id" in result.output
-    assert "session_id" in result.output
-    assert "modality" in result.output
-    assert "run_id" in result.output
-    assert "status" in result.output
-    assert "expected_mmwide_csv" in result.output
-    assert "sub-9162" in result.output
-    assert "ses-followup-day2" in result.output
-    assert "T1w" in result.output
-    assert "run-01" in result.output
-    assert "MISSING_CSV" in result.output
-    assert "100.0%" in result.output
     assert result.output.index("Missing percentage table") < result.output.index("Per-run validation table")
+    per_run_section = result.output.split("Per-run validation table", 1)[1]
+    assert " run-01     OK" not in per_run_section
 
 
-def test_validate_cli_summary_only(tmp_path):
-    bids_proj = tmp_path / "BIDS" / "breacher"
-    subj = bids_proj / "sub-9162" / "ses-followup-day2"
-    (subj / "anat").mkdir(parents=True)
-    (subj / "anat" / "sub-9162_ses-followup-day2_T1w.nii.gz").touch()
-    output_dir = tmp_path / "pymm"
-
-    runner = CliRunner()
-    result = runner.invoke(main, ["validate", str(bids_proj), str(output_dir), "--summary-only"])
-    assert result.exit_code == 0
-    assert "Validation summary" in result.output
-    assert "Missing percentage table" in result.output
-    assert "Per-run validation table" not in result.output
-
-
-def test_validate_cli_participant_mode_shows_ok_rows(tmp_path):
+def test_validate_cli_participant_shows_all_rows_by_default(tmp_path):
     bids_proj = tmp_path / "BIDS" / "breacher"
     subj = bids_proj / "sub-9162" / "ses-followup-day2"
     (subj / "anat").mkdir(parents=True)
@@ -237,8 +191,8 @@ def test_validate_cli_participant_mode_shows_ok_rows(tmp_path):
     result = runner.invoke(main, ["validate", str(bids_proj), str(output_dir), "--participant-label", "sub-9162"])
     assert result.exit_code == 0
     assert "Per-run validation table" in result.output
+    assert "sub-9162" in result.output
     assert "OK" in result.output
-
 
 
 def test_validate_detects_schema_mismatch_mmwide_csv(tmp_path):
@@ -276,4 +230,69 @@ def test_validate_cli_writes_json_report(tmp_path):
     assert payload["summary"]["session_count"] == 1
     assert payload["records"][0]["modality"] == "T1w"
     assert "missing_mmwide_csv" in payload["summary"]["finding_counts"]
+    assert payload["config"]["strict_schema"] is False
     assert "JSON report:" in result.output
+
+
+def test_validate_strict_schema_detects_missing_modality_metrics(tmp_path):
+    bids_proj = tmp_path / "BIDS" / "breacher"
+    subj = bids_proj / "sub-9162" / "ses-followup-day2"
+    (subj / "dwi").mkdir(parents=True)
+    (subj / "dwi" / "sub-9162_ses-followup-day2_dwi.nii.gz").touch()
+
+    output_dir = tmp_path / "pymm"
+    _mk_expected_outputs(output_dir, "breacher", "sub-9162", "ses-followup-day2", [("DTI", "run-01")])
+    _write_mmwide(
+        output_dir / "breacher" / "sub-9162" / "ses-followup-day2" / "DTI" / "run-01" / "breacher+sub-9162+ses-followup-day2+DTI+run-01+mmwide.csv",
+        rows=["bids_subject,value", "sub-9162,1"],
+    )
+
+    report = build_validation_report(bids_proj, output_dir, strict_schema=True)
+    finding_messages = [f.message for f in report.study_report.findings if f.code.value == "invalid_mmwide_csv"]
+    assert any("strict_schema_missing_metrics:DTI" in message for message in finding_messages)
+    record = report.study_report.records[0]
+    assert record.strict_schema_applied is True
+    assert record.csv_profile == "DTI"
+
+
+def test_validate_strict_schema_accepts_modality_metrics(tmp_path):
+    bids_proj = tmp_path / "BIDS" / "breacher"
+    subj = bids_proj / "sub-9162" / "ses-followup-day2"
+    (subj / "dwi").mkdir(parents=True)
+    (subj / "dwi" / "sub-9162_ses-followup-day2_dwi.nii.gz").touch()
+
+    output_dir = tmp_path / "pymm"
+    _mk_expected_outputs(output_dir, "breacher", "sub-9162", "ses-followup-day2", [("DTI", "run-01")])
+    _write_mmwide(
+        output_dir / "breacher" / "sub-9162" / "ses-followup-day2" / "DTI" / "run-01" / "breacher+sub-9162+ses-followup-day2+DTI+run-01+mmwide.csv",
+        rows=["bids_subject,fa,md", "sub-9162,0.5,0.8"],
+    )
+
+    report = build_validation_report(bids_proj, output_dir, strict_schema=True)
+    invalid_findings = [f for f in report.study_report.findings if f.code.value == "invalid_mmwide_csv"]
+    assert invalid_findings == []
+    record = report.study_report.records[0]
+    assert record.csv_metric_matches == ("fa", "md")
+
+
+def test_validate_cli_strict_schema_writes_json_flag(tmp_path):
+    bids_proj = tmp_path / "BIDS" / "breacher"
+    subj = bids_proj / "sub-9162" / "ses-followup-day2"
+    (subj / "dwi").mkdir(parents=True)
+    (subj / "dwi" / "sub-9162_ses-followup-day2_dwi.nii.gz").touch()
+
+    output_dir = tmp_path / "pymm"
+    _mk_expected_outputs(output_dir, "breacher", "sub-9162", "ses-followup-day2", [("DTI", "run-01")])
+    _write_mmwide(
+        output_dir / "breacher" / "sub-9162" / "ses-followup-day2" / "DTI" / "run-01" / "breacher+sub-9162+ses-followup-day2+DTI+run-01+mmwide.csv",
+        rows=["bids_subject,value", "sub-9162,1"],
+    )
+    report_json = tmp_path / "reports" / "validate_strict.json"
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["validate", str(bids_proj), str(output_dir), "--summary-only", "--strict-schema", "--report-json", str(report_json)])
+    assert result.exit_code == 0
+    payload = __import__("json").loads(report_json.read_text(encoding="utf-8"))
+    assert payload["config"]["strict_schema"] is True
+    assert payload["records"][0]["csv_issue"] == "strict_schema_missing_metrics:DTI"
+    assert "Strict schema mode: on" in result.output

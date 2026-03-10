@@ -77,6 +77,10 @@ class RunValidationRecord:
     findings: tuple[ValidationFinding, ...] = ()
     csv_columns: tuple[str, ...] = ()
     csv_row_count: int = 0
+    csv_issue: str | None = None
+    csv_profile: str | None = None
+    strict_schema_applied: bool = False
+    csv_metric_matches: tuple[str, ...] = ()
 
     @property
     def session(self) -> SessionKey:
@@ -94,6 +98,7 @@ class StudyValidationReport:
     expected_sessions: tuple[SessionKey, ...]
     discovered_sessions: tuple[SessionKey, ...]
     status_by_session: Mapping[SessionKey, dict | None] = field(default_factory=dict)
+    strict_schema: bool = False
 
     def records_for_session(self, session: SessionKey) -> tuple[RunValidationRecord, ...]:
         return tuple(record for record in self.records if record.session == session)

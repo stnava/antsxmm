@@ -100,6 +100,13 @@ def _extract_run_from_relpath(relpath: str) -> str:
     return parts[4] if len(parts) >= 5 else "unknown"
 
 
+def _extract_expected_artifact_key(relpath: str) -> tuple[str, str, str, str] | None:
+    parts = Path(relpath).parts
+    if len(parts) < 5:
+        return None
+    return (parts[1], parts[2], parts[3], parts[4])
+
+
 def build_validation_report(
     bids_project_dir: str | Path,
     output_dir: str | Path = "pymm",
@@ -107,6 +114,7 @@ def build_validation_report(
     participant_labels: Iterable[str] | None = None,
     check_mmwide_content: bool = True,
     check_status_files: bool = True,
+    strict_schema: bool = False,
 ) -> ValidationReport:
     study_report = build_validation_report_v1(
         bids_project_dir,
@@ -114,6 +122,7 @@ def build_validation_report(
         participant_labels=participant_labels,
         check_mmwide_content=check_mmwide_content,
         check_status_files=check_status_files,
+        strict_schema=strict_schema,
     )
     return ValidationReport(
         study_report=study_report,
@@ -298,18 +307,19 @@ def build_session_modality_table(results: Dict[str, ValidationResult]) -> List[S
 
 
 def build_missing_percentage_table(results: Dict[str, ValidationResult]) -> List[MissingPercentageRow]:
-    expected_by_modality: dict[str, int] = {}
+    expected_keys_by_modality: dict[str, set[tuple[str, str, str, str]]] = defaultdict(set)
     missing_dirs_by_modality: dict[str, int] = {}
     missing_mmwide_by_modality: dict[str, int] = {}
     invalid_mmwide_by_modality: dict[str, int] = {}
 
     for res in results.values():
-        for relpath in res.ok:
+        for relpath in [*res.ok, *res.missing, *res.missing_mmwide_files, *res.invalid_mmwide_files]:
             modality = _extract_modality_from_relpath(relpath)
-            expected_by_modality[modality] = expected_by_modality.get(modality, 0) + 1
+            key = _extract_expected_artifact_key(relpath)
+            if key is not None:
+                expected_keys_by_modality[modality].add(key)
         for relpath in res.missing:
             modality = _extract_modality_from_relpath(relpath)
-            expected_by_modality[modality] = expected_by_modality.get(modality, 0) + 1
             missing_dirs_by_modality[modality] = missing_dirs_by_modality.get(modality, 0) + 1
         for relpath in res.missing_mmwide_files:
             modality = _extract_modality_from_relpath(relpath)
@@ -319,13 +329,13 @@ def build_missing_percentage_table(results: Dict[str, ValidationResult]) -> List
             invalid_mmwide_by_modality[modality] = invalid_mmwide_by_modality.get(modality, 0) + 1
 
     rows: List[MissingPercentageRow] = []
-    for modality in sorted(expected_by_modality):
-        expected_count = expected_by_modality[modality]
+    for modality in sorted(expected_keys_by_modality):
+        expected_count = len(expected_keys_by_modality[modality])
         missing_dir_count = missing_dirs_by_modality.get(modality, 0)
         present_dir_count = expected_count - missing_dir_count
         missing_mmwide_count = missing_mmwide_by_modality.get(modality, 0)
         invalid_mmwide_count = invalid_mmwide_by_modality.get(modality, 0)
-        present_mmwide_count = expected_count - missing_mmwide_count - invalid_mmwide_count
+        present_mmwide_count = max(expected_count - missing_mmwide_count - invalid_mmwide_count, 0)
         missing_dir_pct = (100.0 * missing_dir_count / expected_count) if expected_count else 0.0
         missing_mmwide_pct = (100.0 * missing_mmwide_count / expected_count) if expected_count else 0.0
         invalid_mmwide_pct = (100.0 * invalid_mmwide_count / expected_count) if expected_count else 0.0
