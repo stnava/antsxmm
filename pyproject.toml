@@ -20,6 +20,9 @@ dependencies = [
     "click",
     "antspyx",
     "syntx",
+    "matplotlib>=3.8.0",
+    "seaborn>=0.13.0",
+    "jinja2>=3.1.0",
 ]
 
 [project.optional-dependencies]

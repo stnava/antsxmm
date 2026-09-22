@@ -582,6 +582,88 @@ def validate_cmd(
             click.secho(f"  OK directories: {len(res.ok)}", fg="green")
         click.echo("")
 
+@main.command("report", short_help="Generate interactive HTML report for a session or study.")
+@click.option(
+    "--session",
+    "-s",
+    "session_dir",
+    type=click.Path(path_type=Path),
+    help="Path to subject/session directory.",
+)
+@click.option(
+    "--study",
+    "study_csv",
+    type=click.Path(path_type=Path),
+    help="Path to study aggregated CSV.",
+)
+@click.option(
+    "--out",
+    "-o",
+    "output_html",
+    type=click.Path(path_type=Path),
+    help="Path to output HTML file (defaults to <session_dir>/session_report.html or study_report.html).",
+)
+@click.option(
+    "--theme",
+    type=click.Choice(["auto", "dark", "light"], case_sensitive=False),
+    default="auto",
+    show_default=True,
+    help="Theme mode.",
+)
+@click.option("--title", help="Custom report title.")
+@click.option(
+    "--open-browser",
+    is_flag=True,
+    help="Open generated report in default browser.",
+)
+def report_cmd(
+    session_dir: Path | None,
+    study_csv: Path | None,
+    output_html: Path | None,
+    theme: str,
+    title: str | None,
+    open_browser: bool,
+) -> None:
+    """Generate interactive, standalone HTML reports for session or study outputs.
+
+    Specify either --session to generate a session report or --study to generate
+    a study-level cohort aggregation report.
+    """
+    if (session_dir is None and study_csv is None) or (session_dir is not None and study_csv is not None):
+        click.secho("Error: Must specify exactly one of --session or --study.", fg="red", err=True)
+        sys.exit(1)
+
+    try:
+        import webbrowser
+        try:
+            from .visualize.report import generate_session_report, generate_study_report
+        except ImportError:
+            from antsxmm.visualize.report import generate_session_report, generate_study_report
+
+        if session_dir is not None:
+            report_path = generate_session_report(
+                session_dir=session_dir,
+                output_html=output_html,
+                theme=theme.lower(),
+                title=title,
+            )
+            click.secho(f"Session report generated successfully: {report_path}", fg="green", bold=True)
+        else:
+            report_path = generate_study_report(
+                study_csv_path=study_csv,
+                output_html=output_html,
+                theme=theme.lower(),
+                title=title,
+            )
+            click.secho(f"Study report generated successfully: {report_path}", fg="green", bold=True)
+
+        if open_browser:
+            webbrowser.open(report_path.as_uri())
+
+    except Exception as exc:
+        click.secho(f"Error generating report: {exc}", fg="red", err=True)
+        sys.exit(1)
+
 def _run_pipeline_logic(
     bids_dir: str,
     output_dir: str,

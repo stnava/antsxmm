@@ -77,3 +77,4 @@ coverage.xml
 # Other
 *.sqlite3
 *.db
+.agents/
