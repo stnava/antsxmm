@@ -174,10 +174,28 @@ def execute_unit(
         print(f"[ANTsXMM] Processing {mod} (run: {unit.run}) -> {prefix}")
 
     try:
-        if mod == "T1w":
-            # T1w is processed as part of hierarchical context
+        if mod in ("T1w", "T1wHierarchical"):
+            # T1w/T1wHierarchical is processed as part of hierarchical context
             if os.path.exists(mmwide_path):
                 return pd.read_csv(mmwide_path)
+            # Check if companion (T1wHierarchical or T1w) already wrote an mmwide.csv
+            companion_mod = "T1wHierarchical" if mod == "T1w" else "T1w"
+            companion_prefix = prefix.replace(f"{sep}{mod}{sep}", f"{sep}{companion_mod}{sep}")
+            companion_mmwide = f"{companion_prefix}{sep}mmwide.csv"
+            if os.path.exists(companion_mmwide):
+                df = pd.read_csv(companion_mmwide)
+                ensure_parent_dir(prefix)
+                df.to_csv(mmwide_path, index=False)
+                return df
+            if context.hier and isinstance(context.hier, dict) and "dataframes" in context.hier:
+                try:
+                    import antspyt1w
+                    t1wide = antspyt1w.merge_hierarchical_csvs_to_wide_format(context.hier["dataframes"], identifier=None)
+                    ensure_parent_dir(prefix)
+                    t1wide.to_csv(mmwide_path, index=False)
+                    return t1wide
+                except Exception:
+                    pass
             return None
 
         elif mod == "T2Flair":
