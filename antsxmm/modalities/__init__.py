@@ -90,8 +90,10 @@ from .perfusion import (
     bold_perfusion,
     bold_perfusion_minimal,
     calculate_CBF,
-    pet3d_summary,
     warn_if_small_mask,
+)
+from .pet import (
+    pet3d_summary,
 )
 from .registration import (
     dewarp_imageset,
@@ -216,6 +218,8 @@ __all__ = [
     "calculate_CBF",
     "bold_perfusion_minimal",
     "bold_perfusion",
+    # pet
+    "pet",
     "pet3d_summary",
     # super_resolution
     "down2iso",

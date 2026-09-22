@@ -30,7 +30,8 @@ from .io import (
     write_rsf_outputs,
 )
 from .neuromelanin import neuromelanin
-from .perfusion import bold_perfusion, pet3d_summary
+from .perfusion import bold_perfusion
+from .pet import pet3d_summary
 from .templates import get_data
 from .wmh import boot_wmh, wmh
 

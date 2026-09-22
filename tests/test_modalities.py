@@ -400,4 +400,14 @@ def test_dispatch_execute_unit_mock(tmp_path):
     assert res["test_col"].iloc[0] == 123
 
 
+def test_pet_module_exports():
+    """Verify antsxmm.modalities.pet exports pet3d_summary."""
+    import antsxmm.modalities.pet as pet_mod
+    from antsxmm.modalities import pet3d_summary
+
+    assert callable(pet_mod.pet3d_summary)
+    assert pet3d_summary is pet_mod.pet3d_summary
+
+
+
 
