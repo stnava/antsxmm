@@ -18,6 +18,7 @@ __all__ = [
     "process_session",
     "run_study",
     "check_modality_order",
+    "modalities",
 ]
 
 
@@ -45,7 +46,7 @@ def __getattr__(name: str):
 
         return run_study
 
-    if name in {"session", "pipeline", "environment", "core", "bids"}:
+    if name in {"session", "pipeline", "environment", "core", "bids", "modalities"}:
         from importlib import import_module
 
         return import_module(f".{name}", __name__)
