@@ -223,3 +223,87 @@ def test_down2iso():
     assert spc[0] == pytest.approx(1.0)
     assert spc[1] == pytest.approx(1.0)
     assert spc[2] == pytest.approx(1.0)
+
+
+def test_registration_module_exports():
+    """Verify antsxmm.registration exports all expected registration functions."""
+    import antsxmm.registration as reg
+
+    assert callable(reg.timeseries_reg)
+    assert callable(reg.mc_reg)
+    assert callable(reg.dti_reg)
+    assert callable(reg.dti_template)
+    assert callable(reg.dewarp_imageset)
+    assert callable(reg.get_average_dwi_b0)
+    assert callable(reg.get_average_rsf)
+    assert callable(reg.timeseries_transform)
+    assert callable(reg.tra_initializer)
+    assert callable(reg.bvec_reorientation)
+    assert callable(reg.apply_transforms_mixed_interpolation)
+
+    assert hasattr(antsxmm, "registration")
+    assert antsxmm.registration.timeseries_reg is reg.timeseries_reg
+
+
+def test_segmentation_module_exports():
+    """Verify antsxmm.segmentation exports all expected segmentation functions."""
+    import antsxmm.segmentation as seg
+
+    assert callable(seg.wmh)
+    assert callable(seg.boot_wmh)
+    assert callable(seg.trim_dti_mask)
+    assert callable(seg.crop_mcimage)
+    assert callable(seg.warn_if_small_mask)
+    assert callable(seg.segment_timeseries_by_meanvalue)
+    assert callable(seg.segment_timeseries_by_bvalue)
+    assert callable(seg.map_scalar_to_labels)
+    assert callable(seg.enantiomorphic_filling_without_mask)
+
+    assert hasattr(antsxmm, "segmentation")
+    assert antsxmm.segmentation.wmh is seg.wmh
+
+
+def test_get_average_rsf():
+    """Test get_average_rsf computes temporal mean in range [min_t, max_t]."""
+    from antsxmm.registration import get_average_rsf
+
+    shape = (4, 4, 4, 10)
+    arr = np.arange(10, dtype=np.float32).reshape(1, 1, 1, 10)
+    arr = np.broadcast_to(arr, shape).copy()
+    img4d = ants.from_numpy(arr)
+
+    avg_img = get_average_rsf(img4d, min_t=2, max_t=6)
+    assert avg_img.shape == (4, 4, 4)
+    # Mean of [2, 3, 4, 5] is 3.5
+    assert np.allclose(avg_img.numpy(), 3.5)
+
+
+def test_map_scalar_to_labels():
+    """Test mapping dataframe scalar column onto anatomical integer labels."""
+    from antsxmm.segmentation import map_scalar_to_labels
+
+    label_np = np.zeros((6, 6, 6), dtype=np.float32)
+    label_np[1:3, 1:3, 1:3] = 1
+    label_np[3:5, 3:5, 3:5] = 2
+    label_img = ants.from_numpy(label_np)
+
+    df = pd.DataFrame({"label": [1, 2], "scalar_value": [42.0, 99.0]})
+    mapped = map_scalar_to_labels(df, label_img)
+
+    mapped_np = mapped.numpy()
+    assert np.allclose(mapped_np[1:3, 1:3, 1:3], 42.0)
+    assert np.allclose(mapped_np[3:5, 3:5, 3:5], 99.0)
+    assert np.allclose(mapped_np[0, 0, 0], 0.0)
+
+
+def test_warn_if_small_mask():
+    """Test warn_if_small_mask detects low-fraction masks."""
+    from antsxmm.segmentation import warn_if_small_mask
+
+    mask_np = np.zeros((10, 10, 10), dtype=np.float32)
+    mask_np[0, 0, 0] = 1.0  # 1 / 1000 = 0.001 < 0.05
+    mask_img = ants.from_numpy(mask_np)
+
+    with pytest.warns(UserWarning, match="Small mask detected"):
+        warn_if_small_mask(mask_img, threshold_fraction=0.05, label="TestMask")
+
