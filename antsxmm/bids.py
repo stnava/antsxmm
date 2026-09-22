@@ -94,11 +94,12 @@ def parse_antsxbids_layout(bids_root):
             data['nm_filenames'] = sorted(set(nm_files))
 
             # 5. Perfusion
-            perf_dir = ses_dir / 'perf'
-            if perf_dir.exists():
-                perf_files = _sorted_glob(perf_dir, ["*.nii.gz", "*.nii"])
-                data['perf_filenames'] = perf_files
-                # Prefer ASL-like series if present.
+            perf_files = []
+            for pdir in (ses_dir / 'perf', ses_dir / 'asl'):
+                if pdir.exists():
+                    perf_files.extend(_sorted_glob(pdir, ["*.nii.gz", "*.nii"]))
+            data['perf_filenames'] = perf_files
+            if perf_files:
                 data['perf_filename'] = _select_first(perf_files, preferred_substrings=["asl", "cbf", "perfusion"]) 
 
             # 6. PET

@@ -118,8 +118,17 @@ def neuromelanin(
     bstem2t1 = ants.apply_transforms(t1, template_bstem, reg["fwdtransforms"], interpolator="nearestNeighbor").iMath("MD", 1)
     bstem2t1 = ants.crop_image(bstem2t1, slab2t1)
     cropper = ants.decrop_image(bstem2t1, slab2t1).iMath("MD", brain_stem_dilation)
+    nm_imgs: list[ants.ANTsImage] = []
+    for x in list_nm_images:
+        xim = ants.image_read(x) if isinstance(x, (str, os.PathLike)) else x
+        if hasattr(xim, "dimension") and xim.dimension == 4:
+            nm_imgs.extend(ants.ndimage_to_list(xim))
+        else:
+            nm_imgs.append(xim)
 
-    nm_imgs = list(list_nm_images)
+    if not nm_imgs:
+        raise ValueError("No valid neuromelanin images provided")
+
     nm_avg = nm_imgs[0] * 0.0
     for k in range(len(nm_imgs)):
         if denoise is not None:

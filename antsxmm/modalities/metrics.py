@@ -295,6 +295,8 @@ def apply_transforms_mixed_interpolation(
         whichtoinvert=whichtoinvert,
         **kwargs,
     )
+    if not ants.image_physical_space_consistency(interp_linear, mask):
+        mask = ants.resample_image_to_target(mask, interp_linear, interp_type="nearestNeighbor")
     return (interp_linear * mask) + (interp_nn * (1.0 - mask))
 
 

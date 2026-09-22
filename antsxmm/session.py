@@ -483,7 +483,9 @@ def process_session(
                 run_session_plan_natively,
             )
 
-            t1_unit = next((u for u in execution_plan if u.modality in ("T1w", "T1wHierarchical")), None)
+            t1_unit = next((u for u in execution_plan if u.modality == "T1wHierarchical"), None) or next(
+                (u for u in execution_plan if u.modality == "T1w"), None
+            )
             canonical_t1_prefix = (
                 t1_unit.output_prefix
                 if t1_unit

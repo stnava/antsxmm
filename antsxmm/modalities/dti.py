@@ -945,10 +945,10 @@ def joint_dti_recon(
     img_lr: ants.ANTsImage,
     bval_lr: Any,
     bvec_lr: Any,
-    jhu_atlas: ants.ANTsImage,
-    jhu_labels: ants.ANTsImage,
-    reference_b0: ants.ANTsImage,
-    reference_dwi: ants.ANTsImage,
+    jhu_atlas: ants.ANTsImage | None = None,
+    jhu_labels: ants.ANTsImage | None = None,
+    reference_b0: ants.ANTsImage | None = None,
+    reference_dwi: ants.ANTsImage | None = None,
     srmodel: Any = None,
     img_rl: ants.ANTsImage | None = None,
     bval_rl: Any = None,
@@ -963,9 +963,51 @@ def joint_dti_recon(
     censor: bool = True,
     diffusion_model: str = "DTI",
     verbose: bool = False,
+    **kwargs: Any,
 ) -> dict[str, Any]:
     """Joint reconstruction and atlas-based labeling for DTI data."""
     import antspyt1w
+
+    if "dti_motion_correct" in kwargs and motion_correct is None:
+        motion_correct = kwargs["dti_motion_correct"]
+    if "dti_denoise" in kwargs:
+        denoise = kwargs["dti_denoise"]
+
+    if reference_b0 is None or reference_dwi is None:
+        ab0_res = get_average_dwi_b0(img_lr)
+        if isinstance(ab0_res, dict):
+            if reference_b0 is None:
+                reference_b0 = ab0_res.get("b0_avg")
+            if reference_dwi is None:
+                reference_dwi = ab0_res.get("dwi_avg", reference_b0)
+        elif isinstance(ab0_res, (list, tuple)):
+            if reference_b0 is None and len(ab0_res) > 0:
+                reference_b0 = ab0_res[0]
+            if reference_dwi is None:
+                reference_dwi = ab0_res[1] if len(ab0_res) > 1 else reference_b0
+        else:
+            if reference_b0 is None:
+                reference_b0 = ab0_res
+            if reference_dwi is None:
+                reference_dwi = ab0_res
+
+    if jhu_atlas is None:
+        try:
+            from .templates import get_data
+            jhu_fn = get_data("JHU_MNI_SS_FA_1mm", target_extension=".nii.gz")
+            if jhu_fn and os.path.exists(jhu_fn):
+                jhu_atlas = ants.image_read(jhu_fn)
+        except Exception:
+            jhu_atlas = None
+
+    if jhu_labels is None:
+        try:
+            from .templates import get_data
+            jhu_lbl_fn = get_data("JHU_MNI_SS_WMPM_Type-I_syn_1mm", target_extension=".nii.gz")
+            if jhu_lbl_fn and os.path.exists(jhu_lbl_fn):
+                jhu_labels = ants.image_read(jhu_lbl_fn)
+        except Exception:
+            jhu_labels = None
 
     def _fix_shape(img: ants.ANTsImage, bval_fn: Any, bvec_fn: Any) -> ants.ANTsImage:
         if isinstance(bvec_fn, str):
@@ -1064,19 +1106,23 @@ def joint_dti_recon(
     recon_fa = recon_lr_dewarp["FA"]
     recon_md = recon_lr_dewarp["MD"]
 
-    or_fa2jhureg = ants.registration(
-        recon_fa, jhu_atlas, type_of_transform="antsRegistrationSyNQuickRepro[s]",
-        reg_iterations=reg_its, verbose=False
-    )
-    or_fa_jhulabels = ants.apply_transforms(
-        recon_fa, jhu_labels, or_fa2jhureg["fwdtransforms"], interpolator="genericLabel"
-    )
-
-    df_fa_jhu = antspyt1w.map_intensity_to_dataframe("FA_JHU_labels_edited", recon_fa, or_fa_jhulabels)
-    df_fa_wide = antspyt1w.merge_hierarchical_csvs_to_wide_format({"df_FA_JHU_ORRL": df_fa_jhu}, col_names=["Mean"])
-
-    df_md_jhu = antspyt1w.map_intensity_to_dataframe("MD_JHU_labels_edited", recon_md, or_fa_jhulabels)
-    df_md_wide = antspyt1w.merge_hierarchical_csvs_to_wide_format({"df_MD_JHU_ORRL": df_md_jhu}, col_names=["Mean"])
+    if jhu_atlas is not None and jhu_labels is not None:
+        or_fa2jhureg = ants.registration(
+            recon_fa, jhu_atlas, type_of_transform="antsRegistrationSyNQuickRepro[s]",
+            reg_iterations=reg_its, verbose=False
+        )
+        or_fa_jhulabels = ants.apply_transforms(
+            recon_fa, jhu_labels, or_fa2jhureg["fwdtransforms"], interpolator="genericLabel"
+        )
+        df_fa_jhu = antspyt1w.map_intensity_to_dataframe("FA_JHU_labels_edited", recon_fa, or_fa_jhulabels)
+        df_fa_wide = antspyt1w.merge_hierarchical_csvs_to_wide_format({"df_FA_JHU_ORRL": df_fa_jhu}, col_names=["Mean"])
+        df_md_jhu = antspyt1w.map_intensity_to_dataframe("MD_JHU_labels_edited", recon_md, or_fa_jhulabels)
+        df_md_wide = antspyt1w.merge_hierarchical_csvs_to_wide_format({"df_MD_JHU_ORRL": df_md_jhu}, col_names=["Mean"])
+    else:
+        or_fa2jhureg = None
+        or_fa_jhulabels = None
+        df_fa_wide = pd.DataFrame({"FA_mean": [float(recon_fa.mean())]})
+        df_md_wide = pd.DataFrame({"MD_mean": [float(recon_md.mean())]})
 
     temp = segment_timeseries_by_meanvalue(img_lrdwp)
     b0_idx = temp["highermeans"]

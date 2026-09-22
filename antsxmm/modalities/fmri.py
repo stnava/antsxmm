@@ -495,6 +495,9 @@ def resting_state_fmri_networks(
     if f is None:
         f = [0.03, 0.08]
 
+    if fmri_template is None:
+        fmri_template = get_average_rsf(fmri)
+
     output_directory = tempfile.mkdtemp()
     output_directory_w = os.path.join(output_directory, "ts_t1_reg")
     os.makedirs(output_directory_w, exist_ok=True)

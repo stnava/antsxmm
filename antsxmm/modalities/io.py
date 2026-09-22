@@ -206,11 +206,23 @@ def write_nm_outputs(
         if ants.is_image(val):
             image_write_with_thumbnail(val, f"{op}{key}.nii.gz", thumb=False)
 
-    # Wide dataframe
-    if isinstance(nm_result.get("NM_dataframe_wide"), pd.DataFrame):
-        nm_wide = nm_result["NM_dataframe_wide"].copy()
-    else:
-        nm_wide = dict_to_dataframe(nm_result)
+    # Wide dataframe - capture all scalar metrics (SNR, SN vol, ref intensity, etc.)
+    nm_wide = dict_to_dataframe(nm_result)
+
+    # If NM_dataframe is present, extract non-empty regional label measurements
+    if isinstance(nm_result.get("NM_dataframe"), pd.DataFrame):
+        nmdf = nm_result["NM_dataframe"]
+        for _, row in nmdf.iterrows():
+            desc = str(row.get("Description", "")).strip().replace(" ", "_")
+            mean_val = row.get("Mean")
+            if pd.notna(mean_val) and desc:
+                nm_wide[f"NM_{desc}_Mean"] = [mean_val]
+
+    if isinstance(nm_result.get("NM_dataframe_wide"), pd.DataFrame) and not nm_result["NM_dataframe_wide"].empty:
+        df_wide = nm_result["NM_dataframe_wide"]
+        cols_to_use = [c for c in df_wide.columns if c != "u_hier_id"]
+        if cols_to_use:
+            nm_wide = pd.concat([nm_wide, df_wide[cols_to_use]], axis=1)
 
     write_modality_mmwide(output_prefix, nm_wide, separator=separator)
     return nm_wide
@@ -248,6 +260,13 @@ def write_pet_outputs(
 ) -> pd.DataFrame:
     """Serialize PET summary outputs and write mmwide.csv."""
     ensure_parent_dir(output_prefix)
+    op = f"{output_prefix}{separator}"
+
+    # Write images
+    for key in get_antsimage_keys(pet_result):
+        val = pet_result[key]
+        if ants.is_image(val):
+            image_write_with_thumbnail(val, f"{op}{key}.nii.gz", thumb=False)
 
     pet_wide = dict_to_dataframe(pet_result)
     if isinstance(pet_result.get("pet3d_dataframe"), pd.DataFrame):

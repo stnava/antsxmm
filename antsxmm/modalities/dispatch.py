@@ -201,7 +201,7 @@ def execute_unit(
 
         elif mod == "T2Flair":
             flair_img = ants.image_read(unit.input_paths[0])
-            t1seg = context.hier["dkt_parc"]["tissue_segmentation"]
+            t1seg = context.hier.get("dkt_parc", {}).get("tissue_segmentation", context.hier.get("tissue_segmentation"))
             res = wmh(
                 flair=flair_img,
                 t1=context.t1_image,
@@ -218,63 +218,111 @@ def execute_unit(
                 warnings.warn(f"Missing .bval/.bvec sidecars for {dwi_path}, cannot perform DTI reconstruction.")
                 return None
 
+            img_rl = ants.image_read(unit.input_paths[1]) if len(unit.input_paths) > 1 else None
+            bval_rl, bvec_rl = (resolve_bids_sidecars(unit.input_paths[1])) if len(unit.input_paths) > 1 else (None, None)
+
             b0_template = context.group_template
             t1brn = context.hier.get("brain_n4_dnz", context.t1_image)
+            dti_moco = kwargs.get("dti_motion_correct", kwargs.get("motion_correct", "antsRegistrationSyNRepro[r]"))
+            dti_denoise = kwargs.get("dti_denoise", kwargs.get("denoise", False))
+
             dti_res = joint_dti_recon(
-                dwi_img,
-                bval_fn,
-                bvec_fn,
-                t1brn,
+                img_lr=dwi_img,
+                bval_lr=bval_fn,
+                bvec_lr=bvec_fn,
+                img_rl=img_rl,
+                bval_rl=bval_rl,
+                bvec_rl=bvec_rl,
+                t1w=t1brn,
+                reference_b0=b0_template,
+                motion_correct=dti_moco,
+                denoise=dti_denoise,
                 verbose=verbose,
-                **kwargs,
             )
             return write_dti_outputs(prefix, dti_res, separator=sep)
 
         elif mod == "rsfMRI":
             rsf_img = ants.image_read(unit.input_paths[0])
-            t1seg = context.hier["dkt_parc"]["tissue_segmentation"]
+            t1seg = context.hier.get("dkt_parc", {}).get("tissue_segmentation", context.hier.get("tissue_segmentation"))
             t1head = context.t1_image
             t1brn = context.hier.get("brain_n4_dnz", t1head)
+            rsf_template = kwargs.get("fmri_template")
             rsf_res = resting_state_fmri_networks(
                 fmri=rsf_img,
-                fmri_template=None,
+                fmri_template=rsf_template,
                 t1=t1brn,
                 t1segmentation=t1seg,
                 verbose=verbose,
-                **kwargs,
             )
             return write_rsf_outputs(prefix, rsf_res, separator=sep)
 
         elif mod == "NM2DMT":
-            nm_imgs = [ants.image_read(p) for p in unit.input_paths]
+            nm_imgs: list[ants.ANTsImage] = []
+            for p in unit.input_paths:
+                img = ants.image_read(p)
+                if hasattr(img, "dimension") and img.dimension == 4:
+                    nm_imgs.extend(ants.ndimage_to_list(img))
+                else:
+                    nm_imgs.append(img)
+            t1brn = context.hier.get("brain_n4_dnz", context.t1_image)
+            t1lab = context.hier.get("deep_cit168lab")
+            if t1lab is None:
+                t1lab = context.hier.get("cit168lab")
+            if t1lab is None:
+                t1lab = context.hier.get("dkt_parc", {}).get("tissue_segmentation", context.hier.get("tissue_segmentation"))
+            if t1lab is None:
+                t1lab = ants.threshold_image(t1brn, "Otsu", 3)
             nm_res = neuromelanin(
-                t1=context.t1_image,
-                hier=context.hier,
-                nm_image_list=nm_imgs,
+                list_nm_images=nm_imgs,
+                t1=t1brn,
+                t1_head=context.t1_image,
+                t1lab=t1lab,
                 verbose=verbose,
-                **kwargs,
             )
             return write_nm_outputs(prefix, nm_res, separator=sep)
 
         elif mod == "perf":
             perf_img = ants.image_read(unit.input_paths[0])
+            t1head = context.t1_image
+            t1brn = context.hier.get("brain_n4_dnz", t1head)
+            t1seg = context.hier.get("dkt_parc", {}).get("tissue_segmentation", context.hier.get("tissue_segmentation"))
+            t1dkt = context.hier.get("dkt_parc", {}).get("dkt_cortex")
+            t1cit = context.hier.get("cit168lab")
+            if t1dkt is not None and t1cit is not None:
+                t1dktcit = t1dkt + t1cit
+            elif t1dkt is not None:
+                t1dktcit = t1dkt
+            else:
+                t1dktcit = context.hier.get("dkt_parc", {}).get("dkt_parcellation", t1seg)
             perf_res = bold_perfusion(
-                perf_img,
+                fmri=perf_img,
+                t1head=t1head,
+                t1=t1brn,
+                t1segmentation=t1seg,
+                t1dktcit=t1dktcit,
                 verbose=verbose,
-                **kwargs,
             )
             return write_perf_outputs(prefix, perf_res, separator=sep)
 
         elif mod == "pet3d":
             pet_img = ants.image_read(unit.input_paths[0])
-            t1seg = context.hier["dkt_parc"]["tissue_segmentation"]
-            t1brn = context.hier.get("brain_n4_dnz", context.t1_image)
+            t1head = context.t1_image
+            t1brn = context.hier.get("brain_n4_dnz", t1head)
+            t1seg = context.hier.get("dkt_parc", {}).get("tissue_segmentation", context.hier.get("tissue_segmentation"))
+            t1dkt = context.hier.get("dkt_parc", {}).get("dkt_cortex")
+            t1cit = context.hier.get("cit168lab")
+            if t1dkt is not None and t1cit is not None:
+                t1dktcit = t1dkt + t1cit
+            elif t1dkt is not None:
+                t1dktcit = t1dkt
+            else:
+                t1dktcit = context.hier.get("dkt_parc", {}).get("dkt_parcellation", t1seg)
             pet_res = pet3d_summary(
                 pet3d=pet_img,
-                t1head=context.t1_image,
+                t1head=t1head,
                 t1=t1brn,
                 t1segmentation=t1seg,
-                t1dktcit=context.hier.get("dkt_parc", {}).get("dkt_cortical_cit168"),
+                t1dktcit=t1dktcit,
                 verbose=verbose,
             )
             return write_pet_outputs(prefix, pet_res, separator=sep)
