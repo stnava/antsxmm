@@ -8,7 +8,7 @@ class DummyNM:
         self.captured = None
 
         def mm_csv(studycsv, **kwargs):
-            doc = docsamson(
+            doc = docsamson(  # noqa: F821
                 'NM2DMT',
                 studycsv=studycsv,
                 outputdir='ignored',

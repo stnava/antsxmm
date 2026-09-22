@@ -42,3 +42,18 @@ local_scheme = "no-local-version"  # <--- This suppresses +g<commit>
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+exclude = ["docs", "out"]
+
+[tool.ruff.lint]
+select = [
+    "E722",  # Bare except
+    "W605",  # Invalid regex escape sequence
+    "F821",  # Undefined name
+    "B006",  # Mutable default argument
+    "E9",    # Syntax / runtime errors
+    "F63",   # Invalid operations
+]
+

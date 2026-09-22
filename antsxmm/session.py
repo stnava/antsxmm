@@ -468,7 +468,7 @@ def process_session(
                 template_mask = ants.image_read(mask_path)
                 template = template * template_mask
                 template = ants.crop_image(template, ants.iMath(template_mask, "MD", 12))
-        except:
+        except Exception:
             template = None
             if verbose:
                 print("Warning: Using default template (None)")

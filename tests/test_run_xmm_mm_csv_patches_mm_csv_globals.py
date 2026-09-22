@@ -18,7 +18,7 @@ class DummyAntsPyMM:
 
         def mm_csv(studycsv, **kwargs):
             # This intentionally resolves docsamson from mm_csv globals.
-            doc = docsamson(
+            doc = docsamson(  # noqa: F821
                 "perf",
                 studycsv=studycsv,
                 outputdir="ignored",

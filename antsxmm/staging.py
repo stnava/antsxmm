@@ -67,7 +67,7 @@ def sanitize_and_stage_file(filepath, project, subject, date, base_modality, ima
     # values as absent.
     if filepath is None:
         return None, None, None
-    if isinstance(filepath, float) and pd.isna(filepath):
+    if isinstance(filepath, float) and math.isnan(filepath):
         return None, None, None
     if not isinstance(filepath, (str, os.PathLike)):
         return None, None, None
