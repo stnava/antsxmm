@@ -62,6 +62,7 @@ def pipeline_options(f):
         click.option("--project", default="Project", help="Project ID string for file naming."),
         click.option("--dl-weights", is_flag=True, help="Force download of ANTsPyMM/T1w weights."),
         click.option("--denoise/--no-denoise", default=True, help="Apply DTI denoising."),
+        click.option("--native/--legacy", "native_execution", default=False, help="Run natively using antsxmm.modalities without legacy mm_csv."),
         click.option("--participant-label", help="Subject ID to process (e.g. sub-01)."),
         click.option("--session-label", help="Session ID to process (e.g. ses-01)."),
         click.option("--t1-run", help="Specific T1 run string to match (e.g. r01)."),
@@ -117,6 +118,7 @@ def run_study(
     rerun_failed: bool = False,
     dry_run: bool = False,
     verbose: bool = False,
+    native_execution: bool = False,
 ) -> list[str]:
     setup_logging(verbose)
     env_payload = apply_default_environment()
@@ -254,6 +256,7 @@ def run_study(
             write_input_manifest=write_input_manifest,
             verbose=verbose,
             tool_version=__version__,
+            native_execution=native_execution,
             resume_mode=(
                 'force' if force else
                 'rerun_failed' if rerun_failed else
@@ -595,6 +598,7 @@ def _run_pipeline_logic(
     rerun_failed: bool,
     dry_run: bool,
     verbose: bool,
+    native_execution: bool = False,
 ) -> None:
     """Internal logic to bridge CLI and execution."""
     setup_logging(verbose)
@@ -625,6 +629,7 @@ def _run_pipeline_logic(
         rerun_failed=rerun_failed,
         dry_run=dry_run,
         verbose=verbose,
+        native_execution=native_execution,
     )
 
     if failures:

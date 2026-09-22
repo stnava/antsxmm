@@ -13,15 +13,18 @@ authors = [
     {name = "ANTsX Community"}
 ]
 dependencies = [
-    "antspymm>=1.1.0",
     "antspyt1w",
     "pandas>=1.0.0",
+    "scipy",
     "tqdm",
     "click",
     "antspyx",
 ]
 
 [project.optional-dependencies]
+legacy = [
+    "antspymm>=1.1.0",
+]
 test = [
     "pytest",
     "pytest-cov",

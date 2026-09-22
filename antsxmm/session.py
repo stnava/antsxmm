@@ -132,6 +132,7 @@ def process_session(
     write_input_manifest: bool = True,
     tool_version: str | None = None,
     resume_mode: str | None = None,
+    native_execution: bool = False,
 ):
     """
     Runs the full ANTsPyMM pipeline on one session.
@@ -139,7 +140,8 @@ def process_session(
     result = {
         'success': False,
         'wide_df': None,
-        'session_dir': None
+        'session_dir': None,
+        'error': None,
     }
 
     # Bind all shared runtime seams via antsxmm.core so unit tests can patch
@@ -376,7 +378,7 @@ def process_session(
             print(f"[INFO] Wrote input manifest: {manifest_path}")
 
     try:
-        if not hasattr(antspymm, 'mm_csv'):
+        if not native_execution and not hasattr(antspymm, 'mm_csv'):
             raise ModuleNotFoundError(
                 "antspymm.mm_csv is required to run antsxmm processing. Install antspymm (and ants) to execute the pipeline."
             )
@@ -473,21 +475,63 @@ def process_session(
             if verbose:
                 print("Warning: Using default template (None)")
 
-        if verbose:
-            print("Running antspymm.mm_csv()...")
+        if native_execution:
+            if verbose:
+                print("[ANTsXMM] Running session natively using antsxmm.modalities...")
+            from .modalities.dispatch import (
+                initialize_session_context,
+                run_session_plan_natively,
+            )
 
-        run_xmm_mm_csv(
-            study_csv_clean,
-            antspymm,
-            mysep=separator,
-            dti_motion_correct=dti_moco,
-            dti_denoise=denoise_dti,
-            normalization_template=template,
-            normalization_template_output='ppmi',
-            normalization_template_transform_type='antsRegistrationSyNQuickRepro[s]',
-            normalization_template_spacing=[1,1,1],
-            srmodel_T1=None, srmodel_NM=None, srmodel_DTI=None,
-        )
+            t1_unit = next((u for u in execution_plan if u.modality in ("T1w", "T1wHierarchical")), None)
+            canonical_t1_prefix = (
+                t1_unit.output_prefix
+                if t1_unit
+                else os.path.join(
+                    output_root,
+                    project_id,
+                    sub_id,
+                    date_id,
+                    "T1wHierarchical",
+                    image_uid,
+                    f"{project_id}{separator}{sub_id}{separator}{date_id}{separator}T1wHierarchical{separator}{image_uid}",
+                )
+            )
+            context = initialize_session_context(
+                t1_path=t1_path,
+                output_prefix_t1_hier=canonical_t1_prefix,
+                project_id=project_id,
+                subject_id=sub_id,
+                session_id=date_id,
+                separator=separator,
+                normalization_template=template,
+                verbose=verbose,
+            )
+            run_session_plan_natively(
+                execution_plan=execution_plan,
+                context=context,
+                verbose=verbose,
+                dti_motion_correct=dti_moco,
+                dti_denoise=denoise_dti,
+            )
+        else:
+            if verbose:
+                print("Running antspymm.mm_csv()...")
+
+            run_xmm_mm_csv(
+                study_csv_clean,
+                antspymm,
+                mysep=separator,
+                dti_motion_correct=dti_moco,
+                dti_denoise=denoise_dti,
+                normalization_template=template,
+                normalization_template_output="ppmi",
+                normalization_template_transform_type="antsRegistrationSyNQuickRepro[s]",
+                normalization_template_spacing=[1, 1, 1],
+                srmodel_T1=None,
+                srmodel_NM=None,
+                srmodel_DTI=None,
+            )
 
 
         result['success'] = True
@@ -502,6 +546,7 @@ def process_session(
                 session_id=date_id,
                 success=True,
                 input_fingerprint=input_fingerprint,
+                execution_engine="antsxmm_native" if native_execution else "antspymm_legacy",
                 args={
                     't1_run_match': t1_run_match,
                     'separator': separator,
@@ -509,6 +554,7 @@ def process_session(
                     'dti_moco': dti_moco,
                     'tool_version': tool_version,
                     'resume_mode': resume_mode,
+                    'native_execution': native_execution,
                 },
                 error=None,
             )
@@ -561,6 +607,7 @@ def process_session(
     except Exception as e:
         print("Error processing {} {}: {}".format(sub_id, date_id, str(e)))
         traceback.print_exc()
+        result['error'] = str(e)
         # Persist failure status
         try:
             write_session_status(
@@ -570,6 +617,7 @@ def process_session(
                 session_id=date_id,
                 success=False,
                 input_fingerprint=input_fingerprint,
+                execution_engine="antsxmm_native" if native_execution else "antspymm_legacy",
                 args={
                     't1_run_match': t1_run_match,
                     'separator': separator,
@@ -577,6 +625,7 @@ def process_session(
                     'dti_moco': dti_moco,
                     'tool_version': tool_version,
                     'resume_mode': resume_mode,
+                    'native_execution': native_execution,
                 },
                 error=str(e),
             )

@@ -307,3 +307,97 @@ def test_warn_if_small_mask():
     with pytest.warns(UserWarning, match="Small mask detected"):
         warn_if_small_mask(mask_img, threshold_fraction=0.05, label="TestMask")
 
+
+def test_io_serialization(tmp_path):
+    """Test serializing modality outputs to disk."""
+    from antsxmm.modalities.io import (
+        ensure_parent_dir,
+        write_flair_outputs,
+        write_modality_mmwide,
+    )
+
+    out_prefix = str(tmp_path / "test_proj" / "sub-01" / "ses-01" / "T2Flair" / "run-01" / "test_proj+sub-01+ses-01+T2Flair+run-01")
+    ensure_parent_dir(out_prefix)
+
+    # Test writing raw mmwide
+    df = pd.DataFrame({"col_a": [1.0], "col_b": [2.0]})
+    csv_path = write_modality_mmwide(out_prefix, df, separator="+")
+    assert os.path.exists(csv_path)
+    loaded_df = pd.read_csv(csv_path)
+    assert list(loaded_df.columns) == ["col_a", "col_b"]
+
+    # Test write_flair_outputs
+    flair_mock = {
+        "wmh_mass": 123.45,
+        "wmh_SNR": 10.2,
+        "WMH_probability_map": ants.from_numpy(np.zeros((4, 4, 4), dtype=np.float32)),
+    }
+    flwide = write_flair_outputs(out_prefix, flair_mock, separator="+", visualize=False)
+    assert os.path.exists(csv_path)
+    assert os.path.exists(f"{out_prefix}+wmh.nii.gz")
+    assert "wmh_mass" in flwide.columns
+
+
+def test_dispatch_bids_sidecars(tmp_path):
+    """Test resolving .bval and .bvec files alongside NIfTI image."""
+    from antsxmm.modalities.dispatch import resolve_bids_sidecars
+
+    dwi_nii = tmp_path / "sub-01_ses-01_dwi.nii.gz"
+    dwi_bval = tmp_path / "sub-01_ses-01_dwi.bval"
+    dwi_bvec = tmp_path / "sub-01_ses-01_dwi.bvec"
+
+    dwi_nii.touch()
+    bval_out, bvec_out = resolve_bids_sidecars(str(dwi_nii))
+    assert bval_out is None
+    assert bvec_out is None
+
+    dwi_bval.touch()
+    dwi_bvec.touch()
+    bval_out, bvec_out = resolve_bids_sidecars(str(dwi_nii))
+    assert bval_out == str(dwi_bval)
+    assert bvec_out == str(dwi_bvec)
+
+
+def test_dispatch_execute_unit_mock(tmp_path):
+    """Test dispatching an execution unit with mocked modality."""
+    from antsxmm.execution_plan import ExecutionUnit
+    from antsxmm.modalities.dispatch import SessionContext, execute_unit
+
+    out_prefix = str(tmp_path / "out" / "proj" / "sub-01" / "ses-01" / "T2Flair" / "run-01" / "proj+sub-01+ses-01+T2Flair+run-01")
+    flair_path = str(tmp_path / "sub-01_ses-01_flair.nii.gz")
+
+    ants.image_write(ants.from_numpy(np.ones((4, 4, 4), dtype=np.float32)), flair_path)
+    t1_img = ants.from_numpy(np.ones((4, 4, 4), dtype=np.float32))
+
+    context = SessionContext(
+        project_id="proj",
+        subject_id="sub-01",
+        session_id="ses-01",
+        t1_image=t1_img,
+        t1_path="t1.nii.gz",
+        hier={"dkt_parc": {"tissue_segmentation": t1_img}},
+        hier_dir=str(tmp_path / "hier"),
+        separator="+",
+    )
+
+    unit = ExecutionUnit(
+        project_id="proj",
+        subject="sub-01",
+        session="ses-01",
+        modality="T2Flair",
+        run="run-01",
+        input_paths=(flair_path,),
+        output_prefix=out_prefix,
+    )
+
+    # If file already exists, it skips execution
+    mmwide_file = f"{out_prefix}+mmwide.csv"
+    os.makedirs(os.path.dirname(mmwide_file), exist_ok=True)
+    pd.DataFrame({"test_col": [123]}).to_csv(mmwide_file, index=False)
+
+    res = execute_unit(unit, context, verbose=False)
+    assert isinstance(res, pd.DataFrame)
+    assert res["test_col"].iloc[0] == 123
+
+
+

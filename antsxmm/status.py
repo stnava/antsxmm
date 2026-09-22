@@ -22,6 +22,7 @@ def write_session_status(
     input_fingerprint: dict,
     args: dict,
     error: str | None = None,
+    execution_engine: str = "antspymm_legacy",
 ) -> str:
     """Write the per-session status file used for resume/force planning."""
     _ensure_dir(session_out_dir)
@@ -32,6 +33,7 @@ def write_session_status(
         'subjectID': subject_id,
         'sessionID': session_id,
         'success': bool(success),
+        'execution_engine': execution_engine,
         'error': error,
         'input_fingerprint': input_fingerprint,
         'args': args,
