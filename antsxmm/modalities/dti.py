@@ -34,6 +34,7 @@ from .metrics import (
     tsnr,
 )
 from .super_resolution import super_res_mcimage
+from .registration import register_images
 
 
 def write_bvals_bvecs(bvals: Any, bvecs: Any, prefix: str) -> None:
@@ -349,8 +350,8 @@ def dti_reg(
         myoffsets[k, :] = myoffsets[k, :] * fdOffset / 2.0 + center_of_mass
     fdpts = pd.DataFrame(data=myoffsets[useinds, :], columns=mycols)
 
-    initrig = ants.registration(avg_b0, ab0, "antsRegistrationSyNRepro[r]", outprefix=ofn_g)
-    deftx = ants.registration(
+    initrig = register_images(avg_b0, ab0, "antsRegistrationSyNRepro[r]", outprefix=ofn_g)
+    deftx = register_images(
         avg_dwi,
         adw,
         "SyNOnly",
@@ -373,9 +374,9 @@ def dti_reg(
         txprefix2 = f"{ofn_l}{str(k % 2).zfill(4)}def_"
 
         if temp.numpy().var() > 0:
-            myrig = ants.registration(fixed, temp, type_of_transform="antsRegistrationSyNRepro[r]", outprefix=txprefix, **kwargs)
+            myrig = register_images(fixed, temp, type_of_transform="antsRegistrationSyNRepro[r]", outprefix=txprefix, **kwargs)
             if type_of_transform == "SyN":
-                myreg = ants.registration(
+                myreg = register_images(
                     fixed, temp, type_of_transform="SyNOnly", total_sigma=total_sigma,
                     grad_step=0.1, initial_transform=myrig["fwdtransforms"][0], outprefix=txprefix2, **kwargs
                 )
@@ -448,7 +449,7 @@ def get_average_dwi_b0(
         temp_dwi = ants.slice_image(x, axis=3, idx=non_b0_idx[0])
         xavg = fixed_b0 * 0.0
         bavg = fixed_b0 * 0.0
-        tempreg = ants.registration(fixed_b0, temp_b0, "antsRegistrationSyNRepro[r]")
+        tempreg = register_images(fixed_b0, temp_b0, "antsRegistrationSyNRepro[r]")
         fixed_b0_use = tempreg["warpedmovout"]
         fixed_dwi_use = ants.apply_transforms(fixed_b0, temp_dwi, tempreg["fwdtransforms"])
 
@@ -456,9 +457,9 @@ def get_average_dwi_b0(
         b0 = ants.slice_image(x, axis=3, idx=myidx)
         if not fast:
             if myidx not in b0_idx:
-                xavg = xavg + ants.registration(fixed_dwi_use, b0, "antsRegistrationSyNRepro[r]", outprefix=ofn)["warpedmovout"]
+                xavg = xavg + register_images(fixed_dwi_use, b0, "antsRegistrationSyNRepro[r]", outprefix=ofn)["warpedmovout"]
             else:
-                bavg = bavg + ants.registration(fixed_b0_use, b0, "antsRegistrationSyNRepro[r]", outprefix=ofn)["warpedmovout"]
+                bavg = bavg + register_images(fixed_b0_use, b0, "antsRegistrationSyNRepro[r]", outprefix=ofn)["warpedmovout"]
         else:
             if myidx not in b0_idx:
                 xavg = xavg + b0
@@ -470,7 +471,7 @@ def get_average_dwi_b0(
     shutil.rmtree(output_directory, ignore_errors=True)
     avgb0 = ants.n4_bias_field_correction(bavg)
     avgdwi = ants.n4_bias_field_correction(xavg)
-    avgdwi = ants.registration(avgb0, avgdwi, "antsRegistrationSyNRepro[r]")["warpedmovout"]
+    avgdwi = register_images(avgb0, avgdwi, "antsRegistrationSyNRepro[r]")["warpedmovout"]
     return avgb0, avgdwi
 
 
@@ -512,7 +513,7 @@ def dti_template(
         for k in range(len(w_image_list)):
             fimg, mimg = wavg, w_image_list[k] * bcsf[k]
             fimg2, mimg2 = bavg, b_image_list[k] * bcsf[k]
-            w1 = ants.registration(
+            w1 = register_images(
                 fimg, mimg, type_of_transform="antsRegistrationSyNQuickRepro[s]",
                 multivariate_extras=[["CC", fimg2, mimg2, 1, 2]], outprefix=mydeftx, verbose=0
             )
@@ -1107,7 +1108,7 @@ def joint_dti_recon(
     recon_md = recon_lr_dewarp["MD"]
 
     if jhu_atlas is not None and jhu_labels is not None:
-        or_fa2jhureg = ants.registration(
+        or_fa2jhureg = register_images(
             recon_fa, jhu_atlas, type_of_transform="antsRegistrationSyNQuickRepro[s]",
             reg_iterations=reg_its, verbose=False
         )

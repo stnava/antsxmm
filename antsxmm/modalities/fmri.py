@@ -25,6 +25,7 @@ from .metrics import (
     tsnr,
 )
 from .templates import get_data
+from .registration import register_images
 
 
 def spec_taper(x: np.ndarray, p: float | np.ndarray = 0.1) -> np.ndarray:
@@ -383,9 +384,9 @@ def timeseries_reg(
         temp = ants.iMath(temp, "Normalize")
         txprefix = f"{ofn_l}{str(k % 2).zfill(4)}_"
         if temp.numpy().var() > 0:
-            myrig = ants.registration(avg_b0, temp, type_of_transform="antsRegistrationSyNRepro[r]", outprefix=txprefix)
+            myrig = register_images(avg_b0, temp, type_of_transform="antsRegistrationSyNRepro[r]", outprefix=txprefix)
             if type_of_transform == "SyN":
-                myreg = ants.registration(
+                myreg = register_images(
                     avg_b0, temp, type_of_transform="SyNOnly", total_sigma=total_sigma,
                     initial_transform=myrig["fwdtransforms"][0], outprefix=txprefix, **kwargs
                 )
@@ -447,13 +448,13 @@ def get_average_rsf(x: ants.ANTsImage, min_t: int = 10, max_t: int = 35) -> ants
         max_t = x.shape[3]
     for myidx in range(min_t, max_t):
         b0 = ants.slice_image(x, axis=3, idx=myidx)
-        bavg = bavg + ants.registration(oavg, b0, "antsRegistrationSyNRepro[r]", outprefix=ofn)["warpedmovout"]
+        bavg = bavg + register_images(oavg, b0, "antsRegistrationSyNRepro[r]", outprefix=ofn)["warpedmovout"]
     bavg = ants.iMath(bavg, "Normalize")
     oavg = ants.image_clone(bavg)
     bavg = oavg * 0.0
     for myidx in range(min_t, max_t):
         b0 = ants.slice_image(x, axis=3, idx=myidx)
-        bavg = bavg + ants.registration(oavg, b0, "antsRegistrationSyNRepro[r]", outprefix=ofn)["warpedmovout"]
+        bavg = bavg + register_images(oavg, b0, "antsRegistrationSyNRepro[r]", outprefix=ofn)["warpedmovout"]
     shutil.rmtree(output_directory, ignore_errors=True)
     return ants.iMath(bavg, "Normalize")
 
@@ -555,7 +556,7 @@ def resting_state_fmri_networks(
     bmask = bmask * tsnrmask
 
     und = fmri_template * bmask
-    t1reg = ants.registration(und, t1, "antsRegistrationSyNQuickRepro[s]", outprefix=ofnt1tx)
+    t1reg = register_images(und, t1, "antsRegistrationSyNQuickRepro[s]", outprefix=ofnt1tx)
 
     gmseg = (
         ants.threshold_image(t1segmentation, 2, 2) + ants.threshold_image(t1segmentation, 4, 4)
@@ -575,7 +576,7 @@ def resting_state_fmri_networks(
     ch2 = ants.image_read(
         ants.get_ants_data("ch2") if powers else get_data("PPMI_template0_brain", target_extension=".nii.gz")
     )
-    treg = ants.registration(ants.resample_image(t1, [1.0, 1.0, 1.0], interp_type=0), ch2, "antsRegistrationSyNQuickRepro[s]")
+    treg = register_images(ants.resample_image(t1, [1.0, 1.0, 1.0], interp_type=0), ch2, "antsRegistrationSyNQuickRepro[s]")
 
     if powers:
         concatx2 = treg["invtransforms"] + t1reg["invtransforms"]

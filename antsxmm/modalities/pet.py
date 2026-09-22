@@ -6,6 +6,7 @@ from typing import Any
 import ants
 
 from .metrics import convert_np_in_dict
+from .registration import register_images
 
 
 def pet3d_summary(
@@ -28,7 +29,7 @@ def pet3d_summary(
         minspc = min(1.0, min(spc))
         pet3dr = ants.resample_image(pet3d, [minspc, minspc, minspc], interp_type=0)
 
-    rig = ants.registration(pet3dr, t1head, type_of_transform)
+    rig = register_images(pet3dr, t1head, type_of_transform)
     bmask = ants.apply_transforms(
         pet3dr, ants.threshold_image(t1segmentation, 1, 6), rig["fwdtransforms"][0], interpolator="genericLabel"
     )

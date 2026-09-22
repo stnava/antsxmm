@@ -10,6 +10,7 @@ import pandas as pd
 import ants
 
 from .metrics import convert_np_in_dict, mask_snr
+from .registration import register_images, robust_affine
 
 
 def tra_initializer(
@@ -38,7 +39,7 @@ def tra_initializer(
     maxtrans = mymax * 0.05
 
     if compreg is None:
-        bestreg = ants.registration(fixed, moving, "Translation", outprefix=os.path.join(output_directory_w, "trans"))
+        bestreg = register_images(fixed, moving, "Translation", outprefix=os.path.join(output_directory_w, "trans"))
         initx = ants.read_transform(bestreg["fwdtransforms"][0])
     else:
         bestreg = compreg
@@ -60,7 +61,7 @@ def tra_initializer(
                 simtx = ants.compose_ants_transforms([r_rot.transform(), initx])
                 ants.write_transform(simtx, tp.name)
                 init_tf = tp.name if k > 0 else None
-                reg = ants.registration(
+                reg = register_images(
                     fixed,
                     moving,
                     regtx,
@@ -112,7 +113,7 @@ def neuromelanin(
     template_nm = ants.iMath(ants.image_read(fnt_nm, reorient=False), "Normalize")
     template_bstem = ants.image_read(fnt_bst, reorient=False).threshold_image(1, 1000)
 
-    reg = ants.registration(t1, template, "antsRegistrationSyNQuickRepro[s]")
+    reg = register_images(t1, template, "antsRegistrationSyNQuickRepro[s]")
     nmavg2t1 = ants.apply_transforms(t1, template_nm, reg["fwdtransforms"], interpolator="linear")
     slab2t1 = ants.threshold_image(nmavg2t1, "Otsu", 2).threshold_image(1, 2).iMath("MD", 1).iMath("FillHoles")
     bstem2t1 = ants.apply_transforms(t1, template_bstem, reg["fwdtransforms"], interpolator="nearestNeighbor").iMath("MD", 1)
@@ -141,7 +142,7 @@ def neuromelanin(
     nm_avg_new = nm_avg * 0.0
     txlist: list[str] = []
     for k in range(len(nm_imgs)):
-        current_image = ants.registration(nm_imgs[k], nm_avg, type_of_transform="antsRegistrationSyNRepro[r]")
+        current_image = register_images(nm_imgs[k], nm_avg, type_of_transform="antsRegistrationSyNRepro[r]")
         txlist.append(current_image["fwdtransforms"][0])
         nm_avg_new = nm_avg_new + current_image["warpedfixout"] / len(nm_imgs)
     nm_avg = nm_avg_new
@@ -176,7 +177,7 @@ def neuromelanin(
     for _ in range(3):
         nm_avg_cropped_new = nm_avg_cropped * 0.0
         for k in range(len(crop_nm_list)):
-            myreg = ants.registration(
+            myreg = register_images(
                 ants.iMath(nm_avg_cropped, "Normalize"), ants.iMath(crop_nm_list[k], "Normalize"), "antsRegistrationSyNRepro[r]"
             )
             warpednext = ants.apply_transforms(nm_avg_cropped_new, crop_nm_list[k], myreg["fwdtransforms"])

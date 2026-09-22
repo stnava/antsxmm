@@ -20,6 +20,142 @@ import ants
 import numpy as np
 import pandas as pd
 
+try:
+    import syntx
+    from syntx import robust_affine, syn
+    _HAS_SYNTX = True
+except ImportError:
+    _HAS_SYNTX = False
+    robust_affine = None
+    syn = None
+
+
+def register_images(
+    fixed: ants.ANTsImage,
+    moving: ants.ANTsImage,
+    type_of_transform: str = "SyN",
+    initial_transform: str | list[str] | None = None,
+    outprefix: str | None = None,
+    mask: ants.ANTsImage | None = None,
+    grad_step: float | None = None,
+    flow_sigma: float | None = None,
+    total_sigma: float | None = None,
+    aff_metric: str | None = None,
+    aff_sampling: int | None = None,
+    syn_metric: str | None = None,
+    syn_sampling: int | None = None,
+    reg_iterations: list[int] | None = None,
+    verbose: bool = False,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Unified registration interface routing to syntx.robust_affine and syntx.syn with fallback."""
+    if _HAS_SYNTX:
+        t_clean = type_of_transform.strip()
+        if "[" in t_clean and "]" in t_clean:
+            b = t_clean[t_clean.find("[") + 1 : t_clean.find("]")].lower()
+            if b == "r":
+                target_transform = "Rigid"
+            elif b == "a":
+                target_transform = "Affine"
+            elif b == "t":
+                target_transform = "Translation"
+            else:
+                target_transform = "SyN"
+        else:
+            target_transform = t_clean
+
+        if target_transform.lower() in ("robust_affine", "robustaffine") or (
+            target_transform.lower() == "affine" and "multivariate_extras" not in kwargs and robust_affine is not None
+        ):
+            try:
+                init_tx = (
+                    initial_transform[0]
+                    if isinstance(initial_transform, (list, tuple)) and initial_transform
+                    else initial_transform
+                )
+                res = robust_affine(
+                    fixed=fixed,
+                    moving=moving,
+                    initial_transform=init_tx,
+                    verbose=verbose,
+                    **kwargs,
+                )
+                if outprefix is not None and res.get("fwdtransforms"):
+                    pdir = os.path.dirname(outprefix)
+                    if pdir:
+                        os.makedirs(pdir, exist_ok=True)
+                    target_mat = f"{outprefix}0GenericAffine.mat"
+                    shutil.copyfile(res["fwdtransforms"][0], target_mat)
+                    res["fwdtransforms"] = [target_mat]
+                    res["invtransforms"] = [target_mat]
+                if "warpedfixout" not in res or res["warpedfixout"] is None:
+                    res["warpedfixout"] = ants.apply_transforms(
+                        fixed=moving,
+                        moving=fixed,
+                        transformlist=res["invtransforms"],
+                        whichtoinvert=res.get("whichtoinvert_inv", [True]),
+                    )
+                return res
+            except Exception as e:
+                warnings.warn(f"syntx.robust_affine failed ({e}); falling back to standard registration.", RuntimeWarning)
+
+        if syn is not None and "multivariate_extras" not in kwargs:
+            syn_kwargs = dict(kwargs)
+            if grad_step is not None:
+                syn_kwargs["grad_step"] = grad_step
+            if flow_sigma is not None:
+                syn_kwargs["flow_sigma"] = flow_sigma
+            if total_sigma is not None:
+                syn_kwargs["total_sigma"] = total_sigma
+            if aff_metric is not None:
+                syn_kwargs["aff_metric"] = aff_metric
+            if aff_sampling is not None:
+                syn_kwargs["aff_sampling"] = aff_sampling
+            if syn_metric is not None:
+                syn_kwargs["syn_metric"] = syn_metric
+            if syn_sampling is not None:
+                syn_kwargs["syn_sampling"] = syn_sampling
+            if reg_iterations is not None:
+                syn_kwargs["reg_iterations"] = reg_iterations
+
+            tot = "SyN" if target_transform.lower() in ("syn", "synto", "synonly") else target_transform
+            if target_transform.lower() == "synonly" and "affine_iterations" not in syn_kwargs:
+                syn_kwargs["affine_iterations"] = [0, 0, 0]
+
+            try:
+                res = syn(
+                    fixed=fixed,
+                    moving=moving,
+                    type_of_transform=tot,
+                    initial_transform=initial_transform,
+                    outprefix=outprefix,
+                    verbose=verbose,
+                    **syn_kwargs,
+                )
+                return {
+                    "warpedmovout": res.get("warpedmovout"),
+                    "warpedfixout": res.get("warpedfixout"),
+                    "fwdtransforms": res.get("fwdtransforms", []),
+                    "invtransforms": res.get("invtransforms", []),
+                    "whichtoinvert_inv": res.get("whichtoinvert_inv", [False] * len(res.get("invtransforms", []))),
+                }
+            except Exception as e:
+                warnings.warn(f"syntx.syn failed ({e}); falling back to ants.registration.", RuntimeWarning)
+
+    return ants.registration(
+        fixed=fixed,
+        moving=moving,
+        type_of_transform=type_of_transform,
+        initial_transform=initial_transform,
+        outprefix=outprefix,
+        mask=mask,
+        verbose=verbose,
+        **kwargs,
+    )
+
+
+register = register_images
+
 
 def apply_transforms_mixed_interpolation(
     fixed: ants.ANTsImage,
@@ -274,7 +410,7 @@ def get_average_dwi_b0(
                 reg_b0_list.append(b0)
                 transforms.append([])
             else:
-                reg = ants.registration(
+                reg = register_images(
                     fixed=fixed_b0,
                     moving=b0,
                     type_of_transform="antsRegistrationSyNRepro[r]",
@@ -319,14 +455,14 @@ def get_average_rsf(x: ants.ANTsImage, min_t: int = 10, max_t: int = 35) -> ants
         oavg = ants.slice_image(x, axis=idim - 1, idx=0)
         for myidx in range(min_t, max_t):
             b0 = ants.slice_image(x, axis=idim - 1, idx=myidx)
-            reg = ants.registration(oavg, b0, "antsRegistrationSyNRepro[r]", outprefix=ofn)
+            reg = register_images(oavg, b0, "antsRegistrationSyNRepro[r]", outprefix=ofn)
             bavg = bavg + reg["warpedmovout"]
         bavg = ants.iMath(bavg, "Normalize")
         oavg = ants.image_clone(bavg)
         bavg = oavg * 0.0
         for myidx in range(min_t, max_t):
             b0 = ants.slice_image(x, axis=idim - 1, idx=myidx)
-            reg = ants.registration(oavg, b0, "antsRegistrationSyNRepro[r]", outprefix=ofn)
+            reg = register_images(oavg, b0, "antsRegistrationSyNRepro[r]", outprefix=ofn)
             bavg = bavg + reg["warpedmovout"]
         bavg = ants.iMath(bavg, "Normalize")
         return bavg
@@ -367,7 +503,7 @@ def tra_initializer(
     tx_list: list[str] = []
 
     for i in range(iterations):
-        reg = ants.registration(
+        reg = register_images(
             fixed=fixed,
             moving=moving_work,
             type_of_transform="Rigid",
@@ -379,12 +515,10 @@ def tra_initializer(
         moving_work = reg["warpedmovout"]
 
         if i < iterations - 1:
-            aff_reg = ants.registration(
+            aff_reg = register_images(
                 fixed=fixed,
                 moving=moving_work,
-                type_of_transform="Affine",
-                aff_metric="meansquares",
-                aff_sampling=32,
+                type_of_transform="robust_affine",
                 verbose=verbose,
             )
             tx_list = aff_reg["fwdtransforms"] + tx_list
@@ -441,7 +575,7 @@ def timeseries_reg(
         temp = ants.iMath(temp, "Normalize")
         if temp.numpy().var() > 0:
             tx_prefix_k = f"{ofn_prefix}{str(k).zfill(4)}_"
-            myrig = ants.registration(
+            myrig = register_images(
                 fixed,
                 temp,
                 type_of_transform=type_of_transform,
@@ -521,7 +655,7 @@ def mc_reg(
         temp = ants.iMath(temp, "Normalize")
         if temp.numpy().var() > 0:
             tx_prefix_k = f"{ofn_l}{str(k).zfill(4)}_"
-            myrig = ants.registration(
+            myrig = register_images(
                 fixed,
                 temp,
                 type_of_transform="antsRegistrationSyNRepro[r]",
@@ -529,7 +663,7 @@ def mc_reg(
                 **kwargs,
             )
             if type_of_transform == "SyN":
-                myreg = ants.registration(
+                myreg = register_images(
                     fixed,
                     temp,
                     type_of_transform="SyNOnly",
@@ -611,7 +745,7 @@ def dti_reg(
         verbose=verbose,
     )["b0_avg"]
 
-    b0_reg = ants.registration(
+    b0_reg = register_images(
         avg_b0,
         ab0,
         type_of_transform="antsRegistrationSyNRepro[a]",
@@ -648,9 +782,9 @@ def dti_reg(
         if temp.numpy().var() > 0:
             txprefix1 = f"{ofn_prefix}rig_{str(k).zfill(4)}_"
             txprefix2 = f"{ofn_prefix}syn_{str(k).zfill(4)}_"
-            myrig = ants.registration(fixed, temp, type_of_transform="antsRegistrationSyNRepro[r]", outprefix=txprefix1, **kwargs)
+            myrig = register_images(fixed, temp, type_of_transform="antsRegistrationSyNRepro[r]", outprefix=txprefix1, **kwargs)
             if type_of_transform == "SyN":
-                myreg = ants.registration(
+                myreg = register_images(
                     fixed, temp, type_of_transform="SyNOnly", total_sigma=total_sigma,
                     grad_step=0.1, initial_transform=myrig["fwdtransforms"][0], outprefix=txprefix2, **kwargs
                 )
@@ -738,7 +872,7 @@ def dti_template(
         for k in range(len(w_image_list)):
             fimg, mimg = wavg, w_image_list[k] * bcsf[k]
             fimg2, mimg2 = bavg, b_image_list[k] * bcsf[k]
-            w1 = ants.registration(
+            w1 = register_images(
                 fimg, mimg, type_of_transform="antsRegistrationSyNQuickRepro[s]",
                 multivariate_extras=[["CC", fimg2, mimg2, 1, 2]], outprefix=mydeftx, verbose=0
             )
@@ -825,7 +959,7 @@ def dewarp_imageset(
             locavg = image_list[k]
             moco0 = None
 
-        reg = ants.registration(btp, locavg, **kwargs)
+        reg = register_images(btp, locavg, **kwargs)
         reglist.append(reg)
 
         if imagetype == 3 and moco0 is not None:
@@ -870,4 +1004,8 @@ __all__ = [
     "timeseries_transform",
     "tra_initializer",
     "transform_and_reorient_dti",
+    "register_images",
+    "register",
+    "syn",
+    "robust_affine",
 ]

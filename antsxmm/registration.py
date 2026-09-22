@@ -23,6 +23,10 @@ from .modalities.registration import (
     timeseries_transform,
     tra_initializer,
     transform_and_reorient_dti,
+    register_images,
+    register,
+    syn,
+    robust_affine,
 )
 
 __all__ = [
@@ -43,4 +47,8 @@ __all__ = [
     "timeseries_transform",
     "tra_initializer",
     "transform_and_reorient_dti",
+    "register_images",
+    "register",
+    "syn",
+    "robust_affine",
 ]

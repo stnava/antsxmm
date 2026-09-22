@@ -19,6 +19,7 @@ dependencies = [
     "tqdm",
     "click",
     "antspyx",
+    "syntx",
 ]
 
 [project.optional-dependencies]

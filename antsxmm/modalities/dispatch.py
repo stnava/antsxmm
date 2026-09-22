@@ -20,6 +20,7 @@ import pandas as pd
 from ..execution_plan import ExecutionUnit
 from .dti import joint_dti_recon
 from .fmri import resting_state_fmri_networks
+from .registration import register_images
 from .io import (
     ensure_parent_dir,
     write_dti_outputs,
@@ -119,7 +120,7 @@ def initialize_session_context(
             if cit_fn and os.path.exists(cit_fn):
                 template = ants.image_read(cit_fn)
                 template = ants.resample_image(template, [1, 1, 1], use_voxels=False)
-                t1reg = ants.registration(
+                t1reg = register_images(
                     template,
                     hier["brain_n4_dnz"],
                     "antsRegistrationSyNQuickRepro[s]",

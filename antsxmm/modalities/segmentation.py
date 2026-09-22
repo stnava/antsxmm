@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 
 from .metrics import mask_snr
+from .registration import register_images
 
 
 def augment_image(
@@ -50,7 +51,7 @@ def wmh(
     import antspynet
     import antspyt1w
 
-    t1_2_flair_reg = ants.registration(flair, t1, type_of_transform="antsRegistrationSyNRepro[r]")
+    t1_2_flair_reg = register_images(flair, t1, type_of_transform="antsRegistrationSyNRepro[r]")
 
     if probability_mask is None and model == "sysu":
         if verbose:

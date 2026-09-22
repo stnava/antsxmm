@@ -12,6 +12,7 @@ from sklearn.preprocessing import StandardScaler
 
 from .dti import trim_dti_mask
 from .fmri import timeseries_reg
+from .registration import register_images
 from .metrics import (
     convert_np_in_dict,
     dvars,
@@ -174,7 +175,7 @@ def bold_perfusion_minimal(
     if m0_image is None:
         m0 = ants.get_average_of_timeseries(fmrimotcorr)
     else:
-        m0reg = ants.registration(fmri_template, m0_image, "antsRegistrationSyNRepro[r]", verbose=False)
+        m0reg = register_images(fmri_template, m0_image, "antsRegistrationSyNRepro[r]", verbose=False)
         m0 = m0reg["warpedmovout"]
 
     if ntp == 2:
@@ -248,7 +249,7 @@ def bold_perfusion(
 
     fmri_temp_raw, _ = loop_timeseries_censoring(fmri, 0.10)
     fmri_template = ants.get_average_of_timeseries(fmri_temp_raw)
-    rig = ants.registration(fmri_template, t1head, "antsRegistrationSyNRepro[r]")
+    rig = register_images(fmri_template, t1head, "antsRegistrationSyNRepro[r]")
     bmask = ants.apply_transforms(
         fmri_template, ants.threshold_image(t1segmentation, 1, 6), rig["fwdtransforms"][0], interpolator="genericLabel"
     )
@@ -297,7 +298,7 @@ def bold_perfusion(
         minspc = min(2.0, min(spc[0:3]))
         fmri_template = ants.resample_image(fmri_template, [minspc, minspc, minspc], interp_type=0)
 
-    rig = ants.registration(fmri_template, t1head, "antsRegistrationSyNRepro[r]")
+    rig = register_images(fmri_template, t1head, "antsRegistrationSyNRepro[r]")
     bmask = ants.apply_transforms(
         fmri_template, ants.threshold_image(t1segmentation, 1, 6), rig["fwdtransforms"][0], interpolator="genericLabel"
     )
@@ -328,7 +329,7 @@ def bold_perfusion(
     warn_if_small_mask(bmask, label="bold_perfusion:bmask*tsnrmask")
 
     und = fmri_template * bmask
-    t1reg = ants.registration(und, t1, "antsRegistrationSyNRepro[s]")
+    t1reg = register_images(und, t1, "antsRegistrationSyNRepro[s]")
     gmseg = (
         ants.threshold_image(t1segmentation, 2, 2) + ants.threshold_image(t1segmentation, 4, 4)
     ).threshold_image(1, 4).iMath("MD", 1)
@@ -384,7 +385,7 @@ def bold_perfusion(
     if m0 is None:
         m0 = ants.get_average_of_timeseries(corrmo["motion_corrected"])
     else:
-        m0reg = ants.registration(fmri_template, m0, "antsRegistrationSyNRepro[r]", verbose=False)
+        m0reg = register_images(fmri_template, m0, "antsRegistrationSyNRepro[r]", verbose=False)
         m0 = m0reg["warpedmovout"]
 
     if ntp == 2:
