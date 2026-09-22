@@ -6,7 +6,7 @@ PIP ?= $(PYTHON) -m pip
 PYTEST ?= $(PYTHON) -m pytest
 RUFF ?= ruff
 
-.PHONY: help install install-dev develop install-user test test-modalities test-strict test-cov lint lint-fix format format-fix compile audit check build clean clean-all cli-check
+.PHONY: help install install-dev develop install-user test test-modalities test-strict test-cov lint lint-fix format format-fix compile audit check build docs clean clean-all cli-check
 
 # Default target
 help:
@@ -27,6 +27,7 @@ help:
 	@echo "  make audit             Run full validation gate (compile + lint + test)"
 	@echo "  make check             Alias for make audit"
 	@echo "  make build             Build source distribution and wheel"
+	@echo "  make docs              Generate HTML documentation using pdoc"
 	@echo "  make clean             Remove build artifacts, caches, and compiled bytecode"
 	@echo "  make clean-all         Remove all caches, build artifacts, and output directories"
 	@echo "  make cli-check         Verify that the antsxmm CLI executable is responsive"
@@ -75,6 +76,9 @@ check: audit
 
 build: clean
 	$(PYTHON) -m build
+
+docs:
+	$(PYTHON) -m pdoc antsxmm -o docs/
 
 clean:
 	rm -rf build/ dist/ *.egg-info .eggs/

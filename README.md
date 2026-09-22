@@ -1,137 +1,246 @@
 # ANTsXMM
 
-ANTsXMM is a BIDS-oriented orchestration layer for [ANTsPyMM](https://github.com/ANTsX/ANTsPyMM). It discovers multimodal inputs from study / subject / session trees, builds a deterministic execution plan, stages processing safely, and writes reproducible per-session outputs and wide-table artifacts.
+**ANTsXMM** is the modern BIDS multimodal image processing and orchestration framework for the [ANTsX ecosystem](https://github.com/ANTsX). Tailored specifically to consume standardized BIDS datasets curated by [**antsxbids**](https://github.com/ANTsX/antsxbids), ANTsXMM extracts biological metrics across structural, diffusion, functional, perfusion, and metabolic neuroimaging modalities with mathematical parity and zero legacy overhead.
 
-![The ANTsXMM framework](docs/antsxmm_infographic.png)
+[![PyPI](https://img.shields.io/badge/version-v2.4.0-blue.svg)](https://github.com/stnava/antsxmm)
+[![Tests](https://img.shields.io/badge/tests-138%20passed-brightgreen.svg)](https://github.com/stnava/antsxmm)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org)
+[![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
 
-Documentation of functions is available [here](https://htmlpreview.github.io/?https://raw.githubusercontent.com/stnava/antsxmm/main/docs/antsxmm.html).
+![The ANTsXMM Framework](docs/antsxmm_infographic.png)
 
-## Recent progress
+Full API documentation is available [here](https://htmlpreview.github.io/?https://raw.githubusercontent.com/stnava/antsxmm/main/docs/antsxmm.html).  
+For a step-by-step walkthrough, see the [**Getting Started Guide**](docs/GETTING_STARTED.md).
 
-### v2.4.0
-- **Modular Scientific Core**: Integrated self-contained, typed modality modules directly into `antsxmm.modalities` (`dti`, `fmri`, `perfusion`, `pet`, `wmh`, `neuromelanin`, `super_resolution`, `metrics`).
-- **Dedicated Subpackages**: First-class `antsxmm.registration` (4D motion correction, two-pass BOLD/DWI templates, group dewarping, spatial transforms) and `antsxmm.segmentation` (WMH, enantiomorphic lesion filling, timeseries clustering, label mapping).
-- **Native Execution Engine**: Added `--native` / `--legacy` execution flags to `antsxmm run` and `native_execution=True` in `process_session()`, bypassing legacy `mm_csv` and eliminating global state mutations.
-- **Full Decoupling & Independence**: `antsxmm` operates 100% independently without `antspymm` installed (`sys.modules['antspymm'] = None`).
-- **Bitwise Parity Verified**: Evaluated 10/10 numerical equivalence benchmarks against `antspymm` achieving exact bitwise matches across tSNR, DVARS, timeseries segmentation, tensor conversions, CBF, despiking, and two-pass BOLD template estimation.
-- **Quality Gates**: Comprehensive `Makefile` with clean audit targets (`make audit`, `make test`, `make lint`, `make compile`) passing 138/138 tests.
+---
+
+## The ANTsX Multimodal Ecosystem
+
+In the ANTsX pipeline, raw scanner files are converted into machine-learning-ready multimodal phenotypes in two seamless stages:
+
+```mermaid
+flowchart LR
+    A["Raw DICOMs / Scans"] -->|antsxbids| B["Standardized BIDS Dataset"]
+    B -->|antsxmm tree| C["Plan & Discover Modalities"]
+    C -->|antsxmm run --native| D["Native Modality Processing"]
+    D -->|antsxmm validate| E["QA / Completeness Checks"]
+    E -->|antsxmm aggregate| F["Study-Wide Feature Table (.csv)"]
+```
+
+1. **BIDS Curation with [antsxbids](https://github.com/ANTsX/antsxbids)**:
+   - Ingests raw DICOMs, applies BIDS entity rules (`sub-*`, `ses-*`, `run-*`), and writes essential NIfTI sidecars (`.bval`, `.bvec`, `.json` recording `PhaseEncodingDirection`, `RepetitionTime`, and slice timing).
+2. **Multimodal Extraction with [antsxmm](https://github.com/stnava/antsxmm)**:
+   - Discovers subject/session layouts via `parse_antsxbids_layout()`.
+   - Dispatches native processing across modalities (`T1w`, `FLAIR`, `DTI`, `rsfMRI`, `ASL`, `PET`, `NM2DMT`).
+   - Produces deterministic, reproducible per-modality artifacts and study-wide wide tables.
+
+---
+
+## Core Capabilities & Modalities
+
+ANTsXMM includes self-contained, typed implementations for all major neuroimaging modalities:
+
+| Modality | Dedicated Module | Key Scientific Capabilities |
+| :--- | :--- | :--- |
+| **Structural T1w** | [`antsxmm.modalities.super_resolution`](antsxmm/modalities/super_resolution.py) | Cortical thickness, deep learning tissue segmentation, isotropic resampling (`down2iso`), super-resolution with hemispheres (`t1w_super_resolution_with_hemispheres`). |
+| **T2w / FLAIR** | [`antsxmm.modalities.wmh`](antsxmm/modalities/wmh.py) | White matter hyperintensity (WMH) segmentation (`wmh`), multi-round bootstrapping (`boot_wmh`), enantiomorphic lesion filling (`enantiomorphic_filling_without_mask`). |
+| **Diffusion (DTI/DWI)** | [`antsxmm.modalities.dti`](antsxmm/modalities/dti.py) | Multi-pass motion/eddy correction (`dti_reg`), b-vector repair & reorientation (`repair_bvecs`), tensor fitting (`efficient_dwi_fit`, `dipy_dti_recon`), streamline tractography, connectivity matrices. |
+| **Resting-State fMRI** | [`antsxmm.modalities.fmri`](antsxmm/modalities/fmri.py) | Two-pass BOLD template estimation (`get_average_rsf`), 4D motion correction (`timeseries_reg`), framewise displacement (FD), DVARS, tSNR, AFNI despiking, spectral ALFF/fALFF (`alffmap`), PerAF, network censoring. |
+| **Perfusion (ASL)** | [`antsxmm.modalities.perfusion`](antsxmm/modalities/perfusion.py) | Quantitative Cerebral Blood Flow (`calculate_CBF`), tag-minus-control subtraction, regional perfusion extraction across anatomical labels. |
+| **3D PET** | [`antsxmm.modalities.pet`](antsxmm/modalities/pet.py) | Standardized Uptake Value Ratio (SUVR) quantification (`pet3d_summary`), rigid coregistration to structural T1w, reference region normalization. |
+| **Neuromelanin (NM)** | [`antsxmm.modalities.neuromelanin`](antsxmm/modalities/neuromelanin.py) | Substantia Nigra & Locus Coeruleus contrast ratio calculation, iterative affine slab initializer (`tra_initializer`), template registration. |
+| **Registration & Templates**| [`antsxmm.registration`](antsxmm/registration/__init__.py) | 4D timeseries registration, two-pass group dewarping (`dewarp_imageset`), average DWI/rsfMRI templates. |
+| **Segmentation & Labels** | [`antsxmm.segmentation`](antsxmm/segmentation/__init__.py) | Timeseries mean/b-value clustering, mask quality checks (`warn_if_small_mask`), mapping dataframes to anatomical labels (`map_scalar_to_labels`). |
+
+---
 
 ## Installation
 
 ```bash
-pip install .
-pip install ".[test]"
+# Standard installation
+pip install antsxmm
+
+# With test dependencies
+pip install "antsxmm[test]"
+
+# From source
+git clone https://github.com/stnava/antsxmm.git
+cd antsxmm
+make install
 ```
 
-## Current CLI shape
+---
 
-```bash
-antsxmm run <BIDS_DIR> <OUTPUT_DIR> --project <PROJECT>
-antsxmm tree <PATH>
-antsxmm validate <INPUT_BIDS_PROJECT> <OUTPUT_DIR>
-antsxmm aggregate <ROOT> --output <AGGREGATE.csv>
-```
+## Quickstart (Command Line)
 
-A compatibility entry path is also supported, so this still works:
-
-```bash
-antsxmm <BIDS_DIR> <OUTPUT_DIR> --project <PROJECT>
-```
-
-## Usage
-
-### Inspect a dataset or subject
+### 1. Inspect & Plan (`antsxmm tree`)
+Preview all subjects, sessions, and modalities discovered from an `antsxbids` directory:
 
 ```bash
 antsxmm tree BIDS/PPMI
-antsxmm tree BIDS/PPMI/sub-182341
 ```
 
-### Run a single subject/session
+### 2. Process Data (`antsxmm run`)
+Execute multimodal processing natively without legacy wrappers:
 
 ```bash
-antsxmm run BIDS/PPMI pymm --project PPMI \
+# Run a single subject and session
+antsxmm run BIDS/PPMI /data/output --project PPMI \
   --participant-label sub-182341 \
-  --session-label ses-20230111
+  --session-label ses-20230111 \
+  --native
+
+# Dry-run to preview execution units
+antsxmm run BIDS/PPMI /data/output --project PPMI --dry-run --verbose
+
+# Run entire study with automated resumption
+antsxmm run BIDS/PPMI /data/output --project PPMI --native --resume
 ```
 
-### Run a study
+### 3. Validate Outputs (`antsxmm validate`)
+Check the output tree for missing modalities, corrupted tables, or pipeline failures:
 
 ```bash
-antsxmm run BIDS/PPMI pymm --project PPMI
+antsxmm validate BIDS/PPMI /data/output
 ```
 
-### Dry-run the execution plan
+### 4. Aggregate Study Metrics (`antsxmm aggregate`)
+Aggregate all per-session wide tables into a unified analysis CSV:
 
 ```bash
-antsxmm run BIDS/PPMI pymm --project PPMI --dry-run --verbose
+antsxmm aggregate /data/output --output /data/output/study_aggregate.csv
 ```
 
-### Aggregate per-run merged tables
+---
 
-```bash
-antsxmm aggregate study_root --output study_root/aggregate.csv
+## ANTsPy-Style Python API
+
+`antsxmm` functions operate directly on `ants.ANTsImage` objects, following standard ANTsPy conventions:
+
+### Motion Correction & Registration
+```python
+import ants
+import antsxmm.registration as areg
+
+# Load 4D BOLD timeseries
+bold = ants.image_read("sub-01_task-rest_bold.nii.gz")
+
+# Generate two-pass motion-corrected template matching ANTsPyMM bitwise
+template = areg.get_average_rsf(bold, min_t=5, max_t=30)
+
+# Perform 4D motion correction with framewise displacement tracking
+reg_res = areg.timeseries_reg(bold, fixed=template)
+corrected = reg_res["motion_corrected"]
+fd = reg_res["FD"]
 ```
 
-`aggregate` recursively discovers `*mmwidemerged.csv` files below `ROOT`, resolves
-study entities from the directory layout and filename, and writes one study-level
-row per `(project_id, subject_id, session_id, modality, run_id)` entity. By
-default it prefers `Processed/` over `pymm/` when duplicates exist and keeps an
-incremental state file next to the output so later runs only re-read changed
-entities.
+### White Matter Hyperintensity Segmentation
+```python
+import ants
+import antsxmm.segmentation as aseg
 
-## Environment defaults and cluster usage
+t1 = ants.image_read("sub-01_T1w.nii.gz")
+flair = ants.image_read("sub-01_FLAIR.nii.gz")
 
-ANTsXMM now applies runtime defaults in a dedicated CLI bootstrap module before the heavier pipeline module and optional imaging dependencies are imported. This lets all child processes inherit the same environment while still respecting explicit user or scheduler settings. Programmatic callers that invoke pipeline functions directly remain supported; in that case antsxmm applies the same defaults at runtime before processing begins.
+# Segment WMH and calculate lesion burden
+wmh_out = aseg.wmh(flair_image=flair, t1_image=t1)
+prob_map = wmh_out["WMH_probability_map"]
+print(f"WMH Mass: {wmh_out['wmh_mass']:.2f}")
+```
 
-The following variables are managed when they are not already set:
+### Diffusion Tensor Imaging (DTI)
+```python
+import numpy as np
+import ants
+import antsxmm.modalities.dti as adti
 
-- `TF_NUM_INTEROP_THREADS`
-- `TF_NUM_INTRAOP_THREADS`
-- `ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS`
-- `OPENBLAS_NUM_THREADS`
-- `MKL_NUM_THREADS`
-- `MPLBACKEND=Agg`
+dwi = ants.image_read("sub-01_dwi.nii.gz")
+bvecs = np.loadtxt("sub-01_dwi.bvec").T
 
-Thread count selection priority is:
+# Repair gradient vectors to unit norm
+clean_bvecs = adti.repair_bvecs(bvecs)
 
-1. `ANTSXMM_THREADS`
-2. `SLURM_CPUS_PER_TASK`
-3. fallback default `8`
+# Fit diffusion tensors
+dti_fit = adti.efficient_dwi_fit(
+    dwi,
+    bval_file="sub-01_dwi.bval",
+    bvec_file="sub-01_dwi.bvec"
+)
+fa = dti_fit["fa"]
+```
 
-Examples:
+### Resting-State fMRI (ALFF, PerAF, Despiking)
+```python
+import ants
+import antsxmm.modalities.fmri as afmri
+import antsxmm.modalities.metrics as amet
+
+bold = ants.image_read("sub-01_bold.nii.gz")
+
+# Clean high-amplitude artifacts
+despiked = afmri.despike_time_series(bold)
+
+# Compute Amplitude of Low Frequency Fluctuation (ALFF)
+alff = afmri.alff_image(despiked, flo=0.01, fhi=0.1, tr=2.0)
+```
+
+### Cerebral Blood Flow (ASL / CBF)
+```python
+import ants
+import antsxmm.modalities.perfusion as aperf
+
+asl = ants.image_read("sub-01_asl.nii.gz")
+cbf = aperf.calculate_CBF(asl, pld=1.8, label_duration=1.8)["cbf"]
+```
+
+### Positron Emission Tomography (PET SUVR)
+```python
+import ants
+import antsxmm.modalities.pet as apet
+
+pet = ants.image_read("sub-01_pet.nii.gz")
+t1 = ants.image_read("sub-01_T1w.nii.gz")
+labels = ants.image_read("sub-01_parcellation.nii.gz")
+
+summary = apet.pet3d_summary(pet, t1, labels, reference_label=1)
+suvr_df = summary["suvr_table"]
+```
+
+---
+
+## High-Performance Computing (HPC & SLURM)
+
+ANTsXMM manages runtime threading policies across OpenBLAS, MKL, ITK, and TensorFlow before importing heavy dependencies:
 
 ```bash
+# Set study-wide thread limit
 export ANTSXMM_THREADS=8
-antsxmm run BIDS/PPMI pymm --project PPMI
+
+# Run via SLURM
+sbatch --cpus-per-task=8 run_antsxmm_subject.slurm
 ```
 
-```bash
-sbatch --cpus-per-task=8 ...
-```
-
-When `--verbose` is enabled, antsxmm logs the effective environment policy and whether each variable was preserved or defaulted.
-
-## SLURM helper scripts
-
-The repository includes starter scripts in `scripts/`:
-
+Batch helper scripts are available in `scripts/`:
 - `submit_antsxmm_bids.sh`
 - `run_antsxmm_subject.slurm`
-- `zipit.sh`
 
-These are intended as cluster starting points and may require site-specific adjustment for account, partition, module loading, conda activation, memory, and CPU policy.
+---
 
-## Testing
+## Verification & Quality Assurance
 
-```bash
-pytest --cov=antsxmm --cov-report=term-missing tests/
-```
-
-## Versioning
-
-Create a new semantic version tag, for example:
+ANTsXMM maintains a strict zero-regression quality gate:
 
 ```bash
-git tag v0.2.0
+# Run bytecode compilation, ruff linting, and full 138-test pytest suite
+make audit
 ```
+
+- **138 / 138 Unit & Lifecycle Tests Passing**
+- **10 / 10 Scientific Parity Benchmarks** achieving 0.0 bitwise difference against ANTsPyMM
+- **Decoupled Operation**: Runs natively without `antspymm` loaded (`sys.modules['antspymm'] = None`)
+
+---
+
+## License
+
+Apache License 2.0. Developed by the ANTsX Community.

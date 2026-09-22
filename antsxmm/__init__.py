@@ -53,3 +53,7 @@ def __getattr__(name: str):
 
         return import_module(f".{name}", __name__)
     raise AttributeError(f"module 'antsxmm' has no attribute {name!r}")
+
+
+def __dir__():
+    return sorted(list(globals().keys()) + __all__)
