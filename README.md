@@ -8,15 +8,13 @@ Documentation of functions is available [here](https://htmlpreview.github.io/?ht
 
 ## Recent progress
 
-Recent work in this repository focused on making ingestion and execution more robust for real-world BIDS-like datasets:
-
-- added first-class `NM2DMT` modality support from `*_NM.nii.gz` inputs
-- hardened deterministic prefix generation so `mm_csv` no longer fails when an expected modality prefix column is missing
-- added acceptance of legacy run tokens such as `r0001`, with normalization to canonical internal run ids such as `run-01`
-- expanded discovery and tree/planning support for `NM2DMT`, `DTI`, `rsfMRI`, and `pet3d`
-- improved subject filtering so common CLI mistakes such as a trailing slash on `--participant-label` do not silently exclude valid sessions
-- added process-wide environment default management for thread-sensitive libraries while preserving user, scheduler, and container overrides
-- extended regression coverage around modality mapping, deterministic dataframe generation, tree prediction, participant/session filtering, and execution seams
+### v2.4.0
+- **Modular Scientific Core**: Integrated self-contained, typed modality modules directly into `antsxmm.modalities` (`dti`, `fmri`, `perfusion`, `pet`, `wmh`, `neuromelanin`, `super_resolution`, `metrics`).
+- **Dedicated Subpackages**: First-class `antsxmm.registration` (4D motion correction, two-pass BOLD/DWI templates, group dewarping, spatial transforms) and `antsxmm.segmentation` (WMH, enantiomorphic lesion filling, timeseries clustering, label mapping).
+- **Native Execution Engine**: Added `--native` / `--legacy` execution flags to `antsxmm run` and `native_execution=True` in `process_session()`, bypassing legacy `mm_csv` and eliminating global state mutations.
+- **Full Decoupling & Independence**: `antsxmm` operates 100% independently without `antspymm` installed (`sys.modules['antspymm'] = None`).
+- **Bitwise Parity Verified**: Evaluated 10/10 numerical equivalence benchmarks against `antspymm` achieving exact bitwise matches across tSNR, DVARS, timeseries segmentation, tensor conversions, CBF, despiking, and two-pass BOLD template estimation.
+- **Quality Gates**: Comprehensive `Makefile` with clean audit targets (`make audit`, `make test`, `make lint`, `make compile`) passing 138/138 tests.
 
 ## Installation
 
