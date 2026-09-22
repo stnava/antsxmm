@@ -253,18 +253,45 @@ def warn_if_small_mask(
 
 def segment_timeseries_by_meanvalue(image: ants.ANTsImage, quantile: float = 0.995) -> dict[str, list[int]]:
     """Partition timeseries into upper and lower signal mean groups."""
-    means = [float(ants.slice_image(image, axis=3, idx=k).mean()) for k in range(image.shape[3])]
-    qval = float(np.quantile(means, quantile))
-    high_idx = [i for i, m in enumerate(means) if m > qval]
-    low_idx = [i for i, m in enumerate(means) if m <= qval]
-    return {"high": high_idx, "low": low_idx}
+    ishape = image.shape
+    lastdim = len(ishape) - 1
+    meanvalues = [float(ants.slice_image(image, axis=lastdim, idx=x).mean()) for x in range(ishape[lastdim])]
+    myhiq = float(np.quantile(meanvalues, quantile))
+    myloq = float(np.quantile(meanvalues, 1.0 - quantile))
+    lowerindices: list[int] = []
+    higherindices: list[int] = []
+    for x in range(len(meanvalues)):
+        hiabs = abs(meanvalues[x] - myhiq)
+        loabs = abs(meanvalues[x] - myloq)
+        if hiabs < loabs:
+            higherindices.append(x)
+        else:
+            lowerindices.append(x)
+
+    return {
+        "lowermeans": lowerindices,
+        "highermeans": higherindices,
+        "high": higherindices,
+        "low": lowerindices,
+    }
 
 
 def segment_timeseries_by_bvalue(bvals: np.ndarray | list[float]) -> dict[str, list[int]]:
     """Partition diffusion volumes into shells based on nominal b-values."""
     bvals_arr = np.asarray(bvals, dtype=float)
+    threshold = 1e-12
+    lowbvals = [int(i) for i in np.where(bvals_arr <= threshold)[0]]
+    largerbvals = [int(i) for i in np.where(bvals_arr > threshold)[0]]
+    if len(lowbvals) == 0:
+        minval = float(np.min(bvals_arr))
+        lowbvals = [int(i) for i in np.where(bvals_arr <= minval)[0]]
+        largerbvals = [int(i) for i in np.where(bvals_arr > minval)[0]]
+
+    shells: dict[str, list[int]] = {
+        "largerbvals": largerbvals,
+        "lowbvals": lowbvals,
+    }
     unique_bvals = np.unique(np.round(bvals_arr, -2))
-    shells: dict[str, list[int]] = {}
     for ub in unique_bvals:
         idx = np.where(np.abs(bvals_arr - ub) < 50.0)[0].tolist()
         shells[f"b{int(ub)}"] = idx

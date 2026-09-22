@@ -301,17 +301,37 @@ def get_average_dwi_b0(
 
 
 def get_average_rsf(x: ants.ANTsImage, min_t: int = 10, max_t: int = 35) -> ants.ANTsImage:
-    """Compute temporal average of rsfMRI within time range [min_t, max_t]."""
-    x_shape = x.shape
-    n_time_points = x_shape[-1]
-    clamped_max_t = min(max_t, n_time_points)
-    clamped_min_t = min(min_t, clamped_max_t - 1)
+    """Automatically generates the average rsfMRI/BOLD image with quick two-pass registration."""
+    idim = x.dimension
+    n_time_points = x.shape[idim - 1]
+    if n_time_points <= min_t:
+        min_t = 0
+    if n_time_points <= max_t:
+        max_t = n_time_points
 
-    avg_img = ants.slice_image(x, axis=3, idx=clamped_min_t) * 0.0
-    for idx in range(clamped_min_t, clamped_max_t):
-        avg_img = avg_img + ants.slice_image(x, axis=3, idx=idx)
+    if max_t <= min_t:
+        return ants.slice_image(x, axis=idim - 1, idx=0)
 
-    return avg_img / float(clamped_max_t - clamped_min_t)
+    output_directory = tempfile.mkdtemp()
+    ofn = os.path.join(output_directory, "w")
+    try:
+        bavg = ants.slice_image(x, axis=idim - 1, idx=0) * 0.0
+        oavg = ants.slice_image(x, axis=idim - 1, idx=0)
+        for myidx in range(min_t, max_t):
+            b0 = ants.slice_image(x, axis=idim - 1, idx=myidx)
+            reg = ants.registration(oavg, b0, "antsRegistrationSyNRepro[r]", outprefix=ofn)
+            bavg = bavg + reg["warpedmovout"]
+        bavg = ants.iMath(bavg, "Normalize")
+        oavg = ants.image_clone(bavg)
+        bavg = oavg * 0.0
+        for myidx in range(min_t, max_t):
+            b0 = ants.slice_image(x, axis=idim - 1, idx=myidx)
+            reg = ants.registration(oavg, b0, "antsRegistrationSyNRepro[r]", outprefix=ofn)
+            bavg = bavg + reg["warpedmovout"]
+        bavg = ants.iMath(bavg, "Normalize")
+        return bavg
+    finally:
+        shutil.rmtree(output_directory, ignore_errors=True)
 
 
 def timeseries_transform(

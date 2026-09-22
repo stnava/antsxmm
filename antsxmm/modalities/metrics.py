@@ -372,7 +372,7 @@ def dvars(x: ants.ANTsImage, mask: ants.ANTsImage, indices: list[int] | None = N
         vecdiff = m_mat[i - 1, :] - m_mat[i, :]
         dvars_arr[i] = np.sqrt(np.mean(vecdiff * vecdiff))
     if n_pts > 1:
-        dvars_arr[0] = float(np.mean(dvars_arr[1:]))
+        dvars_arr[0] = float(np.mean(dvars_arr))
     return dvars_arr
 
 

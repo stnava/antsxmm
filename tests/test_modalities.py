@@ -264,18 +264,18 @@ def test_segmentation_module_exports():
 
 
 def test_get_average_rsf():
-    """Test get_average_rsf computes temporal mean in range [min_t, max_t]."""
+    """Test get_average_rsf computes normalized template via two-pass registration."""
     from antsxmm.registration import get_average_rsf
 
-    shape = (4, 4, 4, 10)
-    arr = np.arange(10, dtype=np.float32).reshape(1, 1, 1, 10)
-    arr = np.broadcast_to(arr, shape).copy()
-    img4d = ants.from_numpy(arr)
+    grid = np.ogrid[:12, :12, :12]
+    sphere = ((grid[0] - 6) ** 2 + (grid[1] - 6) ** 2 + (grid[2] - 6) ** 2 < 16).astype(np.float32) * 50.0 + 10.0
+    arr = np.stack([sphere + np.random.RandomState(i).randn(*sphere.shape).astype(np.float32) * 0.1 for i in range(8)], axis=-1)
+    img4d = ants.from_numpy(arr.astype(np.float32))
 
-    avg_img = get_average_rsf(img4d, min_t=2, max_t=6)
-    assert avg_img.shape == (4, 4, 4)
-    # Mean of [2, 3, 4, 5] is 3.5
-    assert np.allclose(avg_img.numpy(), 3.5)
+    avg_img = get_average_rsf(img4d, min_t=1, max_t=4)
+    assert avg_img.shape == (12, 12, 12)
+    assert avg_img.numpy().max() <= 1.0 + 1e-5
+    assert avg_img.numpy().min() >= 0.0 - 1e-5
 
 
 def test_map_scalar_to_labels():
